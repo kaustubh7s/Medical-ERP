@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="128" fill="#090d16"/>
+  <circle cx="256" cy="256" r="210" fill="url(#grad)" stroke="#10b981" stroke-width="8"/>
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#064e3b" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+  <!-- Medical Cross / Pill Icon -->
+  <path d="M216 120 h80 v96 h96 v80 h-96 v96 h-80 v-96 h-96 v-80 h96 z" fill="#10b981" stroke="#ffffff" stroke-width="12" stroke-linejoin="round"/>
+  <!-- Pulse Line Accent -->
+  <path d="M140 256 h50 l25 -45 l35 90 l30 -60 l20 25 h72" fill="none" stroke="#ffffff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

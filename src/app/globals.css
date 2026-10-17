@@ -1,26 +1,242 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #f1f5f9;
+    --foreground: #0f172a;
+    --card: #ffffff;
+    --card-foreground: #0f172a;
+    --border: #cbd5e1;
+    --primary: #059669;
+    --primary-foreground: #ffffff;
+    --accent: #0d9488;
+    --muted: #475569;
+  }
+
+  .dark {
+    --background: #090d16;
+    --foreground: #f8fafc;
+    --card: #0f172a;
+    --card-foreground: #f8fafc;
+    --border: #1e293b;
+    --primary: #10b981;
+    --primary-foreground: #ffffff;
+    --accent: #14b8a6;
+    --muted: #94a3b8;
   }
 }
 
+/* Crisp, high-contrast text selection for Light & Dark mode (prevents blacked-out text) */
+::selection {
+  background-color: #7dd3fc !important; /* Sky 300 - clear bright highlight */
+  color: #082f49 !important; /* Deep sky 950 - perfectly legible */
+}
+
+::-moz-selection {
+  background-color: #7dd3fc !important;
+  color: #082f49 !important;
+}
+
+.dark ::selection {
+  background-color: #047857 !important; /* Emerald 700 */
+  color: #f0fdf4 !important; /* Crisp white */
+}
+
+.dark ::-moz-selection {
+  background-color: #047857 !important;
+  color: #f0fdf4 !important;
+}
+
+input::selection, textarea::selection {
+  background-color: #a7f3d0 !important; /* Emerald 200 */
+  color: #064e3b !important; /* Emerald 900 */
+}
+
+.dark input::selection, .dark textarea::selection {
+  background-color: #059669 !important;
+  color: #ffffff !important;
+}
+
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  overflow-x: hidden;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* High-Density Spreadsheet Table Styling */
+.erp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.erp-table thead,
+.erp-table thead tr,
+.erp-table th {
+  background-color: #090d16 !important; /* Deep Sleek Jet Black */
+  color: #f8fafc !important; /* Crisp pure white text */
+  font-weight: 800;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 8px 10px;
+  border-bottom: 2px solid #000000;
+  white-space: nowrap;
+}
+
+.dark .erp-table thead,
+.dark .erp-table thead tr,
+.dark .erp-table th {
+  background-color: #020617 !important;
+  color: #f8fafc !important;
+  border-bottom: 2px solid #1e293b;
+}
+
+/* Also apply to generic data tables across ERP modules */
+table:not(#printable-invoice table) thead,
+table:not(#printable-invoice table) thead tr,
+table:not(#printable-invoice table) thead th {
+  background-color: #090d16 !important;
+  color: #f8fafc !important;
+  font-weight: 800;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  border-bottom: 2px solid #000000;
+}
+
+.dark table:not(#printable-invoice table) thead,
+.dark table:not(#printable-invoice table) thead tr,
+.dark table:not(#printable-invoice table) thead th {
+  background-color: #020617 !important;
+  color: #f8fafc !important;
+  border-bottom: 2px solid #1e293b;
+}
+
+.erp-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: middle;
+}
+
+.dark .erp-table td {
+  border-bottom: 1px solid #1e293b;
+}
+
+.erp-table tr:hover td {
+  background-color: #f1f5f9;
+}
+
+.dark .erp-table tr:hover td {
+  background-color: #131d31;
+}
+
+.erp-table tr.active-row td {
+  background-color: #e0f2fe !important; /* Sky 100 */
+  color: #0369a1 !important;
+}
+
+.dark .erp-table tr.active-row td {
+  background-color: #064e3b !important; /* Emerald 900 */
+  color: #ecfdf5 !important;
+}
+
+.erp-table tr.active-row-emerald td {
+  background-color: #ecfdf5 !important; /* Emerald 50 */
+  color: #064e3b !important;
+  border-top: 1px solid #10b981;
+  border-bottom: 1px solid #10b981;
+}
+
+.dark .erp-table tr.active-row-emerald td {
+  background-color: #064e3b !important;
+  color: #ecfdf5 !important;
+  border-top: 1px solid #059669;
+  border-bottom: 1px solid #059669;
+}
+
+/* Dense ERP Keyboard Shortcut Badge */
+.kbd-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background-color: #e2e8f0;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 700;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.1);
+}
+
+.dark .kbd-shortcut {
+  background-color: #1e293b;
+  color: #f1f5f9;
+  border-color: #334155;
+}
+
+/* Operational Widget Box */
+.erp-widget {
+  background-color: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.dark .erp-widget {
+  background-color: #0f172a;
+  border-color: #1e293b;
+}
+
+/* Custom Slim Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+/* Print Stylesheet */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #printable-invoice,
+  #printable-invoice * {
+    visibility: visible;
+  }
+
+  #printable-invoice {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background: white !important;
+    color: black !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
 }
