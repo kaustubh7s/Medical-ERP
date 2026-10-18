@@ -6,21 +6,21 @@ export interface ScanEventDetail {
   code: string;
   durationMs: number;
   averageInterKeyMs: number;
-  source: 'HARDWARE_WEDGE' | 'FAST_INPUT';
+  source: 'HARDWARE_WEDGE' | 'FAST_INPUT' | 'BLUETOOTH_PHONE';
   timestamp: number;
 }
 
 export interface UseHandheldScannerOptions {
   onScan: (detail: ScanEventDetail) => void;
   enabled?: boolean;
-  maxInterKeyDelayMs?: number; // Maximum ms between characters to qualify as a hardware scanner (default: 60ms)
+  maxInterKeyDelayMs?: number; // Maximum ms between characters (default: 120ms to support phone Bluetooth latency)
   minBarcodeLength?: number;  // Minimum characters for a barcode (default: 3)
 }
 
 export function useHandheldScanner({
   onScan,
   enabled = true,
-  maxInterKeyDelayMs = 60,
+  maxInterKeyDelayMs = 120,
   minBarcodeLength = 3,
 }: UseHandheldScannerOptions) {
   const [lastScan, setLastScan] = useState<ScanEventDetail | null>(null);
@@ -44,9 +44,46 @@ export function useHandheldScanner({
     }
   }, []);
 
+  const triggerScan = useCallback(
+    (codeToScan: string, source: 'HARDWARE_WEDGE' | 'FAST_INPUT' | 'BLUETOOTH_PHONE', durationMs: number = 0, averageInterKey: number = 0) => {
+      const trimmed = codeToScan.trim();
+      if (!trimmed || trimmed.length < minBarcodeLength) return;
+
+      // Clean active input so raw text doesn't linger
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl && 'value' in activeEl) {
+        const inputEl = activeEl as HTMLInputElement;
+        if (inputEl.value.endsWith(trimmed)) {
+          inputEl.value = inputEl.value.slice(0, -trimmed.length);
+        } else if (inputEl.value === trimmed) {
+          inputEl.value = '';
+        }
+        try {
+          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        } catch {}
+      }
+
+      const detail: ScanEventDetail = {
+        code: trimmed,
+        durationMs: Math.round(durationMs),
+        averageInterKeyMs: Math.round(averageInterKey * 10) / 10,
+        source,
+        timestamp: Date.now(),
+      };
+
+      setLastScan(detail);
+      setTotalScans((prev) => prev + 1);
+      resetBuffer();
+
+      onScanRef.current(detail);
+    },
+    [minBarcodeLength, resetBuffer]
+  );
+
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') return;
 
+    // 1. Intercept Keyboard events (Wedge, Bluetooth phone app keystrokes)
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore functional modifier shortcuts (Ctrl, Alt, Meta)
       if (e.ctrlKey || e.altKey || e.metaKey) {
@@ -58,19 +95,10 @@ export function useHandheldScanner({
         activeEl &&
         (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
 
-      // Check if target is a search or barcode input where Enter is expected
-      const isBarcodeInput =
-        activeEl &&
-        activeEl.tagName === 'INPUT' &&
-        (activeEl.getAttribute('placeholder')?.toLowerCase().includes('barcode') ||
-          activeEl.getAttribute('name')?.toLowerCase().includes('barcode') ||
-          activeEl.id?.toLowerCase().includes('barcode') ||
-          activeEl.getAttribute('data-barcode-input') === 'true');
-
       const now = performance.now();
 
-      // Scanner terminal character detection: ENTER
-      if (e.key === 'Enter') {
+      // Scanner terminal character detection: ENTER or TAB
+      if (e.key === 'Enter' || e.key === 'Tab') {
         const buffer = bufferRef.current.trim();
         const timestamps = keyTimestampsRef.current;
 
@@ -78,56 +106,36 @@ export function useHandheldScanner({
           const totalDuration = timestamps[timestamps.length - 1] - timestamps[0];
           const averageInterKey = totalDuration / (timestamps.length - 1);
 
-          // If average time between keys is under maxInterKeyDelayMs, or total time is very fast
-          const isHardwareScan = averageInterKey <= maxInterKeyDelayMs || totalDuration < 350;
+          // Support phone Bluetooth scanners (latency up to 150ms per key) or compound strings
+          const isHardwareScan = averageInterKey <= maxInterKeyDelayMs || totalDuration < 500;
+          const isCompoundBarcode = buffer.includes('|') || buffer.includes('EXP:') || buffer.includes('MRP:');
 
-          if (isHardwareScan || (!isInput && buffer.length >= 4) || buffer.includes('|')) {
+          if (isHardwareScan || (!isInput && buffer.length >= 4) || isCompoundBarcode) {
             e.preventDefault();
             e.stopPropagation();
 
-            // If an input received the rapid text or barcode payload, clean it up so raw text doesn't linger
-            if (isInput && activeEl && 'value' in activeEl) {
-              const inputEl = activeEl as HTMLInputElement;
-              if (inputEl.value.endsWith(buffer)) {
-                inputEl.value = inputEl.value.slice(0, -buffer.length);
-              } else if (inputEl.value === buffer) {
-                inputEl.value = '';
-              }
-              try {
-                inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-              } catch {}
-            }
-
-            const detail: ScanEventDetail = {
-              code: buffer,
-              durationMs: Math.round(totalDuration),
-              averageInterKeyMs: Math.round(averageInterKey * 10) / 10,
-              source: isHardwareScan ? 'HARDWARE_WEDGE' : 'FAST_INPUT',
-              timestamp: Date.now(),
-            };
-
-            setLastScan(detail);
-            setTotalScans((prev) => prev + 1);
-            resetBuffer();
-
-            onScanRef.current(detail);
+            triggerScan(
+              buffer,
+              isCompoundBarcode ? 'BLUETOOTH_PHONE' : isHardwareScan ? 'HARDWARE_WEDGE' : 'FAST_INPUT',
+              totalDuration,
+              averageInterKey
+            );
             return;
           }
         }
 
-        // Reset buffer on non-scanner Enter
         resetBuffer();
         return;
       }
 
-      // Printable single characters (excluding Escape, Tab, Arrows, Shift, etc.)
+      // Printable single characters
       if (e.key.length === 1) {
-        // Enforce max timeout between keystrokes to prevent human typing accumulation
+        // Enforce max timeout between keystrokes to prevent accumulation of unrelated human typing
         if (keyTimestampsRef.current.length > 0) {
           const lastTimestamp = keyTimestampsRef.current[keyTimestampsRef.current.length - 1];
           const delta = now - lastTimestamp;
-          if (delta > maxInterKeyDelayMs * 3) {
-            // Human delay detected: discard old accumulated characters
+          // For phone Bluetooth apps, allow up to 450ms gap before breaking buffer
+          if (delta > maxInterKeyDelayMs * 3.5 && !bufferRef.current.includes('|')) {
             bufferRef.current = '';
             keyTimestampsRef.current = [];
           }
@@ -136,20 +144,39 @@ export function useHandheldScanner({
         bufferRef.current += e.key;
         keyTimestampsRef.current.push(now);
 
-        // Auto-clear buffer if no new character arrives within 400ms
+        // Auto-clear or auto-trigger for phone apps without an Enter/Tab suffix
         if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
         clearTimerRef.current = setTimeout(() => {
-          resetBuffer();
-        }, 400);
+          const buf = bufferRef.current.trim();
+          // If the buffer has complete compound barcode signature (like "UG-7721|EXP:2027-07-31|MRP:204.5")
+          if (buf.includes('|') && (buf.includes('EXP') || buf.includes('MRP') || buf.split('|').length >= 3)) {
+            triggerScan(buf, 'BLUETOOTH_PHONE', 300, 30);
+          } else {
+            resetBuffer();
+          }
+        }, 320);
+      }
+    };
+
+    // 2. Intercept Paste / Broadcast events from phone companion apps
+    const handlePaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData('text')?.trim();
+      if (text && (text.includes('|') || /^\d{8,14}$/.test(text) || text.startsWith('010890'))) {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerScan(text, 'BLUETOOTH_PHONE', 10, 1);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('paste', handlePaste, true);
+
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('paste', handlePaste, true);
       if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
     };
-  }, [enabled, maxInterKeyDelayMs, minBarcodeLength, resetBuffer]);
+  }, [enabled, maxInterKeyDelayMs, minBarcodeLength, resetBuffer, triggerScan]);
 
   return {
     lastScan,

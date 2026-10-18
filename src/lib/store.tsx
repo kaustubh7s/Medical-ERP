@@ -283,7 +283,13 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         if (parsed.membershipSettings) setMembershipSettings(parsed.membershipSettings);
         if (parsed.pendingMemberships) setPendingMemberships(parsed.pendingMemberships);
         if (parsed.auditLogs) setAuditLogs(parsed.auditLogs);
-        if (parsed.barcodeMappings) setBarcodeMappings(parsed.barcodeMappings);
+        if (parsed.barcodeMappings) {
+          const existingCodes = new Set(parsed.barcodeMappings.map((m: BarcodeQRMapping) => m.code.toLowerCase()));
+          const missingInitial = INITIAL_BARCODE_MAPPINGS.filter((m) => !existingCodes.has(m.code.toLowerCase()));
+          setBarcodeMappings([...parsed.barcodeMappings, ...missingInitial]);
+        } else {
+          setBarcodeMappings(INITIAL_BARCODE_MAPPINGS);
+        }
       } else {
         // First-time initialize with INITIAL_SALES_RETURNS and INITIAL_BARCODE_MAPPINGS
         setSalesReturns(INITIAL_SALES_RETURNS);
