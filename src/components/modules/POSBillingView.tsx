@@ -578,16 +578,13 @@ export const POSBillingView: React.FC = () => {
               (activeEl as HTMLInputElement).type?.toLowerCase()
             )));
 
-      // 1. Shift+C / Ctrl+C = Search for customer (open Patient Directory / Khata Modal)
-      if ((isShift && (e.key === 'C' || e.key === 'c') && !isOtherTextEntry) || (isCtrlOrCmd && (e.key === 'c' || e.key === 'C'))) {
-        const hasSelection = !!window.getSelection()?.toString();
-        if (!hasSelection) {
-          e.preventDefault();
-          if (isPaymentModalOpen) return;
-          setRepeatSearchTerm('');
-          setIsCustomerModalOpen(true);
-          return;
-        }
+      // 1. Shift+C = Search for customer (open Patient Directory / Khata Modal)
+      if (isShift && (e.key === 'C' || e.key === 'c') && !isOtherTextEntry) {
+        e.preventDefault();
+        if (isPaymentModalOpen) return;
+        setRepeatSearchTerm('');
+        setIsCustomerModalOpen(true);
+        return;
       }
 
       // 2. Shift+A / Ctrl+A = Add medicine option (focus medicine search/scan input and open dropdown)
