@@ -34,6 +34,7 @@ interface HandheldScannerWidgetProps {
   scanFeedback: ScanFeedback | null;
   onDismissFeedback: () => void;
   onOpenMappingModal?: (code: string) => void;
+  onDirectScan?: (code: string) => void;
   soundEnabled: boolean;
   onToggleSound: () => void;
 }
@@ -44,6 +45,7 @@ export const HandheldScannerWidget: React.FC<HandheldScannerWidgetProps> = ({
   scanFeedback,
   onDismissFeedback,
   onOpenMappingModal,
+  onDirectScan,
   soundEnabled,
   onToggleSound,
 }) => {
@@ -60,6 +62,9 @@ export const HandheldScannerWidget: React.FC<HandheldScannerWidgetProps> = ({
         ...prev.slice(0, 7),
       ]);
       setTestInput('');
+      if (onDirectScan) {
+        onDirectScan(code);
+      }
     }
   };
 
@@ -251,30 +256,63 @@ export const HandheldScannerWidget: React.FC<HandheldScannerWidgetProps> = ({
             <p className="text-[11px] text-slate-500">
               Zap any medicine packaging barcode with your physical scanner gun to verify keystroke transmission speed:
             </p>
-            <input
-              type="text"
-              value={testInput}
-              onChange={(e) => setTestInput(e.target.value)}
-              onKeyDown={handleTestKeyDown}
-              placeholder="Aim your barcode gun and squeeze trigger here..."
-              className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 font-mono text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={testInput}
+                onChange={(e) => setTestInput(e.target.value)}
+                onKeyDown={handleTestKeyDown}
+                placeholder="Aim barcode gun or scan from phone app here..."
+                className="flex-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 font-mono text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <button
+                type="button"
+                disabled={!testInput.trim()}
+                onClick={() => {
+                  const code = testInput.trim();
+                  if (code) {
+                    setTestHistory((prev) => [
+                      { code, speedMs: 25, time: new Date().toLocaleTimeString() },
+                      ...prev.slice(0, 7),
+                    ]);
+                    setTestInput('');
+                    if (onDirectScan) {
+                      onDirectScan(code);
+                    }
+                  }
+                }}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold shrink-0 shadow-xs flex items-center gap-1"
+              >
+                <span>Add to Cart (↵)</span>
+              </button>
+            </div>
 
             {testHistory.length > 0 && (
               <div className="space-y-1 pt-1">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                  Recent Test Captures:
+                  Recent Captures:
                 </span>
-                <div className="space-y-1 max-h-28 overflow-y-auto font-mono text-[11px]">
+                <div className="space-y-1.5 max-h-36 overflow-y-auto font-mono text-[11px]">
                   {testHistory.map((item, idx) => (
                     <div
                       key={idx}
-                      className="p-1.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between"
+                      className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2"
                     >
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{item.code}</span>
-                      <span className="text-slate-500 text-[10px]">
-                        {item.speedMs}ms • {item.time}
-                      </span>
+                      <div className="truncate">
+                        <span className="font-bold text-slate-800 dark:text-slate-200 block truncate">{item.code}</span>
+                        <span className="text-slate-500 text-[10px] font-sans">
+                          {item.speedMs}ms • {item.time}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onDirectScan) onDirectScan(item.code);
+                        }}
+                        className="px-2.5 py-1 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-300 dark:border-emerald-800 text-[10px] font-bold shrink-0"
+                      >
+                        + Add to Cart
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -282,21 +320,24 @@ export const HandheldScannerWidget: React.FC<HandheldScannerWidgetProps> = ({
             )}
           </div>
 
-          {/* Compatibility & Instructions */}
-          <div className="p-3 rounded-lg border border-blue-200 dark:border-blue-900/40 bg-blue-50/50 dark:bg-blue-950/20 text-slate-700 dark:text-slate-300 space-y-1.5">
+          {/* Compatibility & Phone App Pairing Instructions */}
+          <div className="p-3 rounded-lg border border-blue-200 dark:border-blue-900/40 bg-blue-50/50 dark:bg-blue-950/20 text-slate-700 dark:text-slate-300 space-y-2">
             <h5 className="font-bold text-blue-950 dark:text-blue-300 flex items-center gap-1">
               <HelpCircle className="h-3.5 w-3.5 text-blue-600" />
-              <span>Supported Scanners & Formats</span>
+              <span>Using Phone as a Bluetooth Scanner (iPhone / Android)</span>
             </h5>
-            <ul className="list-disc list-inside space-y-0.5 text-[11px] text-slate-600 dark:text-slate-400">
+            <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
               <li>
-                <strong>Any USB / Wireless 2.4GHz / Bluetooth Handheld Scanner</strong> (Honeywell, Zebra, TVS, Datalogic, Eyoyo, Netum, etc.)
+                <strong>Pair as Bluetooth Keyboard / HID</strong>: In your computer&apos;s Bluetooth settings, ensure your phone is connected as an <em>Input Device / Keyboard</em>.
               </li>
               <li>
-                <strong>Barcode Symbologies</strong>: EAN-13, EAN-8, UPC-A, Code-128, Code-39, GS1-128, 2D QR, and DataMatrix.
+                <strong>Scanner Apps</strong>: Apps like <em>Barcode to PC</em>, <em>Wireless Barcode Scanner</em>, or <em>Bluetooth Keyboard & Barcode</em> stream scans directly as keystrokes.
               </li>
               <li>
-                <strong>Zero Configuration Needed</strong>: Works straight out of the box in standard USB HID Keyboard Wedge mode without drivers.
+                <strong>Compound 2D Barcodes</strong>: Supports Indian pharma QR codes like <code className="font-mono bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded text-blue-900 dark:text-blue-200">UG-7721|EXP:2027-07-31|MRP:204.5</code>.
+              </li>
+              <li>
+                <strong>Instant Test</strong>: You can also click the box above or press <kbd className="font-bold bg-white dark:bg-slate-800 px-1 rounded border">Shift+A</kbd> in POS and scan directly.
               </li>
             </ul>
           </div>

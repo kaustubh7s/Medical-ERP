@@ -2186,6 +2186,7 @@ export const POSBillingView: React.FC = () => {
             }}
             soundEnabled={soundEnabled}
             onToggleSound={toggleSound}
+            onDirectScan={handleBarcodeScanned}
           />
         </div>
       </div>
