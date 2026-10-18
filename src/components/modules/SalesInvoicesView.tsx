@@ -345,8 +345,8 @@ export const SalesInvoicesView: React.FC = () => {
         </div>
       </div>
 
-      {/* Invoices Data Table */}
-      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
+      {/* Invoices Data Table (Desktop View - Strictly Preserved for Laptop/PC) */}
+      <div className="hidden md:block rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
@@ -488,7 +488,131 @@ export const SalesInvoicesView: React.FC = () => {
               )}
             </tbody>
           </table>
-        </div>
+      </div>
+      </div>
+
+      {/* Dedicated Mobile Invoice Cards List (md:hidden - Zero Horizontal Scroll Needed!) */}
+      <div className="md:hidden space-y-3">
+        {filteredInvoices.length === 0 ? (
+          <div className="p-8 text-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-slate-400">
+            <Receipt className="h-8 w-8 mx-auto mb-2 opacity-30 text-emerald-600" />
+            <p className="font-bold text-sm text-slate-700 dark:text-slate-300">No Invoices Found</p>
+            <p className="text-xs text-slate-500 mt-1">Adjust search or filters above.</p>
+          </div>
+        ) : (
+          filteredInvoices.map((inv) => {
+            const cat = inv.saleCategory || (
+              inv.items.every((i) => i.itemCategory === 'MEMBERSHIP')
+                ? 'MEMBERSHIP'
+                : inv.items.some((i) => i.itemCategory === 'MEMBERSHIP')
+                ? 'COMBINED'
+                : 'MEDICINE'
+            );
+
+            return (
+              <div
+                key={inv.id}
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-xs space-y-2.5"
+              >
+                {/* Card Top: Invoice #, Date & Category */}
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-mono font-black text-xs text-slate-950 dark:text-slate-50">
+                        {inv.invoiceNumber}
+                      </span>
+                      {cat === 'MEMBERSHIP' ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                          <Crown className="h-2.5 w-2.5" /> CLUB
+                        </span>
+                      ) : cat === 'COMBINED' ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                          <Sparkles className="h-2.5 w-2.5" /> COMBO
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                          <Pill className="h-2.5 w-2.5" /> MEDS
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-0.5">{inv.invoiceDate}</p>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="font-mono font-black text-base text-emerald-700 dark:text-emerald-400 block">
+                      ₹{inv.grandTotal.toFixed(2)}
+                    </span>
+                    <span
+                      className={`inline-block text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                        inv.paymentStatus === 'PAID'
+                          ? 'bg-emerald-500/10 text-emerald-600'
+                          : 'bg-amber-500/10 text-amber-600'
+                      }`}
+                    >
+                      {inv.paymentStatus}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Customer & Doctor details */}
+                <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800/80 space-y-1 text-xs">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                      👤 {inv.customerName}
+                    </span>
+                    {inv.customerPhone && (
+                      <span className="text-[10px] text-slate-500 font-mono shrink-0">
+                        {inv.customerPhone}
+                      </span>
+                    )}
+                  </div>
+                  {inv.doctorName && (
+                    <p className="text-[10px] text-slate-500 truncate">
+                      🩺 Dr. {inv.doctorName}
+                    </p>
+                  )}
+                  {inv.membershipMemberId && (
+                    <span className="inline-flex items-center gap-0.5 text-[9px] font-mono font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 px-1.5 py-0.5 rounded">
+                      ★ Member: {inv.membershipMemberId}
+                    </span>
+                  )}
+                </div>
+
+                {/* Items Summary */}
+                <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">
+                    {inv.items.length} item{inv.items.length === 1 ? '' : 's'}:
+                  </span>{' '}
+                  <span className="text-slate-500">
+                    {inv.items.map((i) => i.medicineName).join(', ')}
+                  </span>
+                </div>
+
+                {/* Bottom Actions Bar */}
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <PaymentModeBadge mode={inv.paymentMode} />
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleOpenPrint(inv)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold shadow-xs"
+                    >
+                      <Printer className="h-3.5 w-3.5" />
+                      <span>Print / View</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('sales-returns')}
+                      title="Process Return"
+                      className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-rose-50 text-slate-400 hover:text-rose-600"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
 
       <PrintInvoiceModal

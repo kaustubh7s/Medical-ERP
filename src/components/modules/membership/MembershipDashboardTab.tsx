@@ -321,7 +321,8 @@ export const MembershipDashboardTab: React.FC<MembershipDashboardTabProps> = ({
           </div>
 
           <div className="overflow-x-auto max-h-[340px]">
-            <table className="w-full text-xs text-left">
+            {/* Desktop Table (md: and up) */}
+            <table className="hidden md:table w-full text-xs text-left">
               <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 font-semibold uppercase text-[10px] sticky top-0">
                 <tr>
                   <th className="py-2.5 px-3">Member ID</th>
@@ -384,6 +385,52 @@ export const MembershipDashboardTab: React.FC<MembershipDashboardTabProps> = ({
                 )}
               </tbody>
             </table>
+
+            {/* Mobile Radar Cards (Zero Horizontal Scroll!) */}
+            <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800 p-2">
+              {expiryRadarMembers.length === 0 ? (
+                <p className="py-6 text-center text-xs text-slate-400">
+                  All memberships are active with healthy coverage periods!
+                </p>
+              ) : (
+                expiryRadarMembers.map(({ member, info }) => (
+                  <div
+                    key={member.id}
+                    onClick={() => onSelectMember(member)}
+                    className="p-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                          {member.customerName}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                            info.isExpired ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {info.isExpired ? 'Expired' : `${info.daysRemaining}d left`}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                        {member.membershipId} • {member.customerPhone}
+                      </p>
+                      <p className="text-[9.5px] text-slate-400">Valid till: {member.expiryDate}</p>
+                    </div>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRenewMember(member);
+                      }}
+                      className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-700 text-white shrink-0 shadow-xs"
+                    >
+                      Renew
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
 

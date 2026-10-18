@@ -96,6 +96,7 @@ export const DayClosingView: React.FC = () => {
   const [closingNotes, setClosingNotes] = useState<string>('');
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
   const [reconcileFeedback, setReconcileFeedback] = useState<string | null>(null);
+  const [mobileSectionTab, setMobileSectionTab] = useState<'COLLECTIONS' | 'REFUNDS' | 'HISTORY'>('COLLECTIONS');
 
   // Damaged Stock Form Modal
   const [isDamagedModalOpen, setIsDamagedModalOpen] = useState(false);
@@ -147,8 +148,12 @@ export const DayClosingView: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      {/* Top Header */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+      {/* =========================================================================
+          DESKTOP & LAPTOP VIEW (100% Strictly Preserved and Unaffected)
+         ========================================================================= */}
+      <div className="hidden lg:block space-y-4">
+        {/* Top Header */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3 shadow-xs">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded bg-emerald-700 text-white flex items-center justify-center font-bold">
             <CalendarCheck className="h-5 w-5" />
@@ -708,8 +713,393 @@ export const DayClosingView: React.FC = () => {
           </div>
         </div>
       </div>
+      </div>
 
-      {/* MODAL: Record Damaged Stock */}
+      {/* =========================================================================
+          DEDICATED MOBILE DAY CLOSING (Simplified, Touch-Optimized & Intuitive!)
+         ========================================================================= */}
+      <div className="lg:hidden space-y-3.5">
+        {/* 1. Mobile Header & Quick Date Selector */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-xs space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-xl bg-emerald-700 text-white flex items-center justify-center font-bold">
+                <CalendarCheck className="h-4 w-4" />
+              </div>
+              <div>
+                <h3 className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight">
+                  Day Closing
+                </h3>
+                <p className="text-[10px] text-slate-500 font-mono">
+                  {currentUser.name} • <span className="text-emerald-600 font-bold">Active Shift</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Reconcile quick button */}
+            <button
+              type="button"
+              onClick={handleManualReconciliation}
+              className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-600 dark:text-slate-300 text-[10px] font-bold flex items-center gap-1"
+              title="Reconcile Cash Returns"
+            >
+              <RefreshCw className="h-3 w-3 text-emerald-600" />
+              <span>Sync</span>
+            </button>
+          </div>
+
+          {/* Date Picker & Presets */}
+          <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setSelectedDate(realToday)}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                selectedDate === realToday
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedDate('2026-08-30')}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                selectedDate === '2026-08-30'
+                  ? 'bg-blue-700 text-white shadow-xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              Demo Shift
+            </button>
+            <input
+              type="date"
+              value={isAllDates ? '' : selectedDate}
+              onChange={(e) => {
+                if (e.target.value) setSelectedDate(e.target.value);
+              }}
+              className="px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-mono font-bold"
+            />
+          </div>
+        </div>
+
+        {/* 2. Hero Expected Cash Card (Simple Flow with Large Numbers) */}
+        <div className="bg-gradient-to-br from-emerald-600 to-teal-800 text-white rounded-2xl p-4 shadow-md space-y-3">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-100">
+                Expected Cash in Drawer
+              </span>
+              <h2 className="text-2xl font-black font-mono tracking-tight mt-0.5">
+                ₹{summary.expectedCashInDrawer.toFixed(2)}
+              </h2>
+            </div>
+            <div className="h-9 w-9 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white">
+              <Banknote className="h-5 w-5" />
+            </div>
+          </div>
+
+          {/* Simple Clean Calculation Row */}
+          <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-white/20 text-center text-xs">
+            <div className="bg-white/10 rounded-lg p-1.5">
+              <span className="text-[9px] text-emerald-100 block">Float Opening</span>
+              <span className="font-mono font-bold text-[11px]">₹{summary.openingCash.toFixed(0)}</span>
+            </div>
+            <div className="bg-white/10 rounded-lg p-1.5">
+              <span className="text-[9px] text-emerald-100 block">(+) Cash Sales</span>
+              <span className="font-mono font-bold text-[11px] text-emerald-200">+₹{summary.totalSalesCash.toFixed(0)}</span>
+            </div>
+            <div className="bg-white/10 rounded-lg p-1.5">
+              <span className="text-[9px] text-emerald-100 block">(-) Refunds</span>
+              <span className="font-mono font-bold text-[11px] text-rose-200">-₹{summary.todaySalesReturnCashRefunds.toFixed(0)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Primary Cashier Action Form (Count Cash & Submit Close) */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs space-y-3">
+          <div className="flex items-center gap-2">
+            <UserCheck className="h-4 w-4 text-emerald-600" />
+            <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100 uppercase">
+              Physical Cash Handover
+            </h4>
+          </div>
+
+          <form onSubmit={handleCloseShift} className="space-y-3">
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                Actual Physical Cash in Drawer (₹) *
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-2.5 font-bold text-slate-400">₹</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  placeholder={`e.g. ${summary.expectedCashInDrawer.toFixed(2)}`}
+                  value={actualPhysicalCash}
+                  onChange={(e) => setActualPhysicalCash(e.target.value)}
+                  className="w-full pl-8 pr-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono text-base font-black text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Instant Status Helper */}
+              {actualPhysicalCash !== '' && (
+                <div className={`mt-2 p-2 rounded-xl text-xs font-bold flex items-center gap-1.5 ${
+                  Math.abs(discrepancy) < 0.01
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                    : discrepancy > 0
+                    ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 border border-blue-300 dark:border-blue-800'
+                    : 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800'
+                }`}>
+                  {Math.abs(discrepancy) < 0.01 ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                      <span>✅ Exact Match: Zero discrepancy in drawer.</span>
+                    </>
+                  ) : discrepancy > 0 ? (
+                    <>
+                      <ArrowUpRight className="h-4 w-4 text-blue-600 shrink-0" />
+                      <span>Excess in Drawer: +₹{discrepancy.toFixed(2)} over expected.</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                      <span>Cash Shortage: -₹{Math.abs(discrepancy).toFixed(2)} missing.</span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                Handover Remarks / Notes
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Float left in drawer for morning shift..."
+                value={closingNotes}
+                onChange={(e) => setClosingNotes(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-900 dark:text-slate-100"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-3 rounded-xl bg-emerald-700 active:bg-emerald-800 text-white font-black text-xs shadow-md transition-all flex items-center justify-center gap-2"
+            >
+              <FileCheck2 className="h-4 w-4" />
+              <span>Submit Day-End Cashier Closing</span>
+            </button>
+          </form>
+        </div>
+
+        {/* 4. Segmented Deep-Dive Tabs (Collections vs Refunds vs History) */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-xs space-y-3">
+          {/* Tab Selector Buttons */}
+          <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold">
+            <button
+              type="button"
+              onClick={() => setMobileSectionTab('COLLECTIONS')}
+              className={`py-1.5 rounded-lg transition-all ${
+                mobileSectionTab === 'COLLECTIONS'
+                  ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              Collections
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileSectionTab('REFUNDS')}
+              className={`py-1.5 rounded-lg transition-all ${
+                mobileSectionTab === 'REFUNDS'
+                  ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              Refunds &amp; Loss
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileSectionTab('HISTORY')}
+              className={`py-1.5 rounded-lg transition-all ${
+                mobileSectionTab === 'HISTORY'
+                  ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              History ({dayClosingRecords.length})
+            </button>
+          </div>
+
+          {/* TAB 1: COLLECTIONS BREAKDOWN */}
+          {mobileSectionTab === 'COLLECTIONS' && (
+            <div className="space-y-2 pt-1 text-xs">
+              <div className="flex justify-between items-center p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  💵 Cash Sales
+                </span>
+                <span className="font-mono font-black text-slate-900 dark:text-slate-100">
+                  ₹{summary.totalSalesCash.toFixed(2)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  📱 Digital UPI / QR
+                </span>
+                <span className="font-mono font-black text-emerald-700 dark:text-emerald-400">
+                  ₹{summary.totalSalesUPI.toFixed(2)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  💳 Debit / Credit Card
+                </span>
+                <span className="font-mono font-black text-slate-900 dark:text-slate-100">
+                  ₹{summary.totalSalesCard.toFixed(2)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  📟 Pine Labs Terminal
+                </span>
+                <span className="font-mono font-black text-slate-900 dark:text-slate-100">
+                  ₹{summary.totalSalesTerminal.toFixed(2)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  📋 Patient Khata Due
+                </span>
+                <span className="font-mono font-black text-rose-600 dark:text-rose-400">
+                  ₹{summary.totalSalesCredit.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-800 font-bold">
+                <span className="text-slate-500 uppercase text-[10px]">Total Billed Today:</span>
+                <span className="font-mono font-black text-sm text-slate-900 dark:text-slate-100">
+                  ₹{summary.totalGrossSales.toFixed(2)} ({dayInvoices.length} bills)
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: REFUNDS & DAMAGE LOSS */}
+          {mobileSectionTab === 'REFUNDS' && (
+            <div className="space-y-3 pt-1 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-800 dark:text-slate-200 text-xs">
+                  Cash Refunds: ₹{summary.todaySalesReturnCashRefunds.toFixed(2)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsDamagedModalOpen(true)}
+                  className="px-2.5 py-1 rounded-lg bg-rose-700 active:bg-rose-800 text-white font-bold text-[11px]"
+                >
+                  + Record Damage
+                </button>
+              </div>
+
+              {refundTxs.length === 0 ? (
+                <div className="p-4 text-center rounded-xl bg-slate-50 dark:bg-slate-800/50 text-slate-400">
+                  No cash refunds recorded for this shift date.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {refundTxs.map((t) => (
+                    <div
+                      key={t.id}
+                      className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between"
+                    >
+                      <div>
+                        <span className="font-mono font-bold text-xs text-slate-900 dark:text-slate-100 block">
+                          {t.referenceNumber || t.transactionNumber || 'Refund'}
+                        </span>
+                        <span className="text-[10px] text-slate-500">{t.notes || t.reason || t.date}</span>
+                      </div>
+                      <span className="font-mono font-bold text-xs text-rose-600">
+                        -₹{t.amount.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Damaged Stock Section */}
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                  Damaged Items Quarantined ({damagedStock.length})
+                </span>
+                {damagedStock.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic">No damaged stock reported.</p>
+                ) : (
+                  damagedStock.slice(-3).map((d) => (
+                    <div
+                      key={d.id}
+                      className="p-2 rounded-lg bg-rose-50/60 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 flex justify-between items-center text-[11px]"
+                    >
+                      <div className="truncate mr-2">
+                        <span className="font-bold text-slate-900 dark:text-slate-100 block truncate">
+                          {d.medicineName} ({d.quantity} units)
+                        </span>
+                        <span className="text-[10px] text-slate-500">{d.reason.replace('_', ' ')}</span>
+                      </div>
+                      <span className="font-mono font-bold text-rose-700 shrink-0">
+                        ₹{d.totalLoss.toFixed(2)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: CLOSING AUDIT HISTORY */}
+          {mobileSectionTab === 'HISTORY' && (
+            <div className="space-y-2 pt-1 text-xs">
+              {dayClosingRecords.length === 0 ? (
+                <div className="p-4 text-center rounded-xl bg-slate-50 dark:bg-slate-800/50 text-slate-400">
+                  No previous shift closures recorded yet.
+                </div>
+              ) : (
+                dayClosingRecords.map((r) => (
+                  <div
+                    key={r.id}
+                    className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-xs text-slate-900 dark:text-slate-100">
+                        📅 {r.date}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        r.discrepancyAmount === 0
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                          : r.discrepancyAmount > 0
+                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                          : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                      }`}>
+                        {r.discrepancyAmount === 0 ? 'Balanced' : `Diff: ${r.discrepancyAmount > 0 ? '+' : ''}₹${r.discrepancyAmount.toFixed(2)}`}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-slate-600 dark:text-slate-400">
+                      <span>Cashier: <strong>{r.closedBy}</strong></span>
+                      <span className="font-mono">Actual: <strong>₹{r.actualCashInDrawer.toFixed(2)}</strong></span>
+                    </div>
+                    {r.notes && (
+                      <p className="text-[10px] text-slate-500 italic bg-white dark:bg-slate-900 p-1.5 rounded">
+                        "{r.notes}"
+                      </p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
       <Modal
         isOpen={isDamagedModalOpen}
         onClose={() => setIsDamagedModalOpen(false)}

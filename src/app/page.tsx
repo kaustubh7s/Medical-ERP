@@ -186,10 +186,13 @@ function PharmacyApp() {
         </div>
 
         {/* Mobile Dedicated App Header & Bottom Bar */}
-        <MobileNavigation />
+        <MobileNavigation
+          onOpenCommand={() => setIsCommandOpen(true)}
+          onOpenNotifications={() => setIsNotificationOpen(true)}
+        />
 
-        {/* Responsive Content Area with Bottom Padding on Mobile */}
-        <main className="flex-1 overflow-y-auto p-2.5 sm:p-3 md:p-4 pb-20 md:pb-6">
+        {/* Responsive Content Area with Dedicated Mobile Padding */}
+        <main className="flex-1 overflow-y-auto p-2 sm:p-2.5 md:p-4 pb-28 md:pb-6">
           <div className="max-w-[1600px] mx-auto">
             {renderModuleView()}
           </div>

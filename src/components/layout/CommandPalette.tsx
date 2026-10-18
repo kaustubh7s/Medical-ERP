@@ -105,7 +105,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4">
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-6 sm:pt-20 p-3 sm:p-4">
       <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm" onClick={onClose} />
 
       <div className="relative w-full max-w-2xl rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden z-10 animate-in zoom-in-95 duration-150">

@@ -269,8 +269,8 @@ export const MedicineMasterView: React.FC = () => {
         />
       </div>
 
-      {/* Spreadsheet Master Table */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg overflow-hidden shadow-xs">
+      {/* Spreadsheet Master Table (Desktop Only - Strictly Preserved) */}
+      <div className="hidden md:block bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg overflow-hidden shadow-xs">
         <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
           <table className="erp-table">
             <thead>
@@ -396,6 +396,124 @@ export const MedicineMasterView: React.FC = () => {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* =========================================================================
+          Dedicated Mobile Medicine Cards List (Zero Horizontal Scroll!)
+         ========================================================================= */}
+      <div className="md:hidden space-y-2.5">
+        {filtered.length === 0 ? (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center text-slate-400">
+            <Pill className="h-10 w-10 mx-auto mb-2 opacity-30 text-emerald-600" />
+            <p className="font-bold text-sm text-slate-800 dark:text-slate-200">No matching medicines</p>
+            <p className="text-xs text-slate-500 mt-1">Try searching for a different brand or generic salt.</p>
+          </div>
+        ) : (
+          filtered.map((m) => (
+            <div
+              key={m.id}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs space-y-2.5"
+            >
+              {/* Header: Favorite, Brand Name, Schedule */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2 min-w-0">
+                  <button
+                    onClick={() => toggleFavoriteMedicine(m.id)}
+                    className={`mt-0.5 p-0.5 ${m.isFavorite ? 'text-amber-500' : 'text-slate-300'}`}
+                  >
+                    <Star className="h-4 w-4 fill-current" />
+                  </button>
+                  <div className="min-w-0">
+                    <h4
+                      onClick={() => handleOpenDetail(m)}
+                      className="font-bold text-xs text-slate-900 dark:text-slate-100 hover:text-emerald-700 cursor-pointer truncate"
+                    >
+                      {m.name}
+                    </h4>
+                    <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                      {m.genericName} • {m.manufacturer}
+                    </p>
+                  </div>
+                </div>
+
+                <span
+                  className={`inline-block px-1.5 py-0.5 rounded text-[8.5px] font-bold shrink-0 ${
+                    m.scheduleType === 'SCHEDULE_H1'
+                      ? 'bg-red-100 text-red-800'
+                      : m.scheduleType === 'SCHEDULE_H'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  {m.scheduleType}
+                </span>
+              </div>
+
+              {/* 3 Metrics: Pack & Stock, Batches, Price */}
+              <div className="grid grid-cols-3 gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800 text-center font-mono">
+                <div className="bg-slate-50 dark:bg-slate-800/60 p-1.5 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="text-[9px] uppercase text-slate-400 font-sans block">Stock</span>
+                  <span className={`text-xs font-black ${m.totalStock <= m.reorderLevel ? 'text-rose-600' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                    {m.totalStock} {m.totalStock <= m.reorderLevel ? '⚠️' : ''}
+                  </span>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800/60 p-1.5 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="text-[9px] uppercase text-slate-400 font-sans block">Batches</span>
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {m.batches.length} ({m.packSize})
+                  </span>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800/60 p-1.5 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="text-[9px] uppercase text-slate-400 font-sans block">MRP</span>
+                  <span className="text-xs font-black text-slate-900 dark:text-slate-100">
+                    ₹{m.batches[0]?.mrp || 0}
+                  </span>
+                </div>
+              </div>
+
+              {/* Bottom Actions Row */}
+              <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-xs">
+                <button
+                  type="button"
+                  onClick={() => toggleMedicineMembershipDiscount(m.id)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                    m.isMembershipDiscountEligible !== false
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                      : 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                  }`}
+                >
+                  {m.isMembershipDiscountEligible !== false ? '✓ 10/20% Disc' : '✗ Excluded'}
+                </button>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => handleOpenDetail(m)}
+                    className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100"
+                  >
+                    Detail
+                  </button>
+                  <button
+                    onClick={() => handleOpenEdit(m)}
+                    className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100"
+                  >
+                    <Edit className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTargetMedForBarcode(m);
+                      setPackagingBarcode('');
+                      setMappingMessage('');
+                      setIsBarcodeMapModalOpen(true);
+                    }}
+                    className="p-1.5 rounded-lg border border-indigo-200 dark:border-indigo-900 bg-indigo-50/50 text-indigo-700 dark:text-indigo-300"
+                  >
+                    <Barcode className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
       {/* MODAL: Comprehensive Medicine Deep Dive Detail Page */}

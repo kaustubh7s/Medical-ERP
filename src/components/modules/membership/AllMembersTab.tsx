@@ -24,6 +24,7 @@ import {
   ChevronRight,
   ArrowUpDown,
   Plus,
+  Users,
 } from 'lucide-react';
 
 interface AllMembersTabProps {
@@ -256,8 +257,8 @@ export const AllMembersTab: React.FC<AllMembersTabProps> = ({
         </div>
       </div>
 
-      {/* Directory Table */}
-      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
+      {/* Directory Table (Desktop Only - Strictly Preserved) */}
+      <div className="hidden md:block rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left">
             <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 font-semibold uppercase text-[10px]">
@@ -427,6 +428,131 @@ export const AllMembersTab: React.FC<AllMembersTabProps> = ({
             </button>
           </div>
         </div>
+      </div>
+
+      {/* =========================================================================
+          Dedicated Mobile Members Cards List (Zero Horizontal Scroll!)
+         ========================================================================= */}
+      <div className="md:hidden space-y-2.5">
+        {paginatedMembers.length === 0 ? (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center text-slate-400">
+            <Users className="h-10 w-10 mx-auto mb-2 opacity-30 text-emerald-600" />
+            <p className="font-bold text-sm text-slate-800 dark:text-slate-200">No member records found</p>
+            <p className="text-xs text-slate-500 mt-1">Try adjusting your search query or filters.</p>
+          </div>
+        ) : (
+          paginatedMembers.map(({ member, expiryInfo, purchaseAgg, tierInfo }) => (
+            <div
+              key={member.id}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs space-y-2.5"
+            >
+              {/* Header: ID, Status, Days left */}
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono font-black text-xs text-emerald-700 dark:text-emerald-400">
+                  {member.membershipId}
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[9.5px] font-bold ${
+                    expiryInfo.isExpired
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                      : member.status === 'SUSPENDED'
+                      ? 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                      : expiryInfo.daysRemaining <= 30
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                  }`}
+                >
+                  {expiryInfo.statusLabel}
+                </span>
+              </div>
+
+              {/* Customer Name & Phone */}
+              <div>
+                <h4
+                  onClick={() => onSelectMember(member)}
+                  className="font-bold text-xs text-slate-900 dark:text-slate-100 hover:text-emerald-700 cursor-pointer"
+                >
+                  {member.customerName}
+                </h4>
+                <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                  📞 {member.customerPhone} • Valid till: {member.expiryDate}
+                </p>
+              </div>
+
+              {/* 2 Metrics: Tier & Purchases */}
+              <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800 text-xs font-mono">
+                <div className="bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="text-[9px] uppercase text-slate-400 font-sans block">Discount Tier</span>
+                  <span className={`font-black ${tierInfo.tier === '20%' ? 'text-purple-700 dark:text-purple-300' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                    {tierInfo.percent}% Tier {tierInfo.tier === '20%' ? '★' : ''}
+                  </span>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="text-[9px] uppercase text-slate-400 font-sans block">3-Mo Purchases</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    {formatINR(purchaseAgg.rollingPurchases)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Bottom Actions Row */}
+              <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-xs">
+                <button
+                  onClick={() => onSelectMember(member)}
+                  className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100"
+                >
+                  View Details
+                </button>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => onRenewMember(member)}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] shadow-xs flex items-center gap-1"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    <span>Renew</span>
+                  </button>
+                  <button
+                    onClick={() => handleToggleSuspend(member)}
+                    className="p-1 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-500 hover:bg-slate-100"
+                    title={member.status === 'SUSPENDED' ? 'Reactivate' : 'Suspend'}
+                  >
+                    {member.status === 'SUSPENDED' ? (
+                      <PlayCircle className="h-3.5 w-3.5 text-emerald-600" />
+                    ) : (
+                      <PauseCircle className="h-3.5 w-3.5 text-amber-600" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+
+        {/* Mobile Pagination Footer */}
+        {totalPages > 1 && (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs">
+            <span className="text-slate-500">
+              Page {currentPage} of {totalPages}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-bold disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-bold disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

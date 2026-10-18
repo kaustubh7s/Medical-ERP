@@ -244,8 +244,8 @@ export const InventoryView: React.FC = () => {
         </div>
       </div>
 
-      {/* High-Density Spreadsheet Table */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg overflow-hidden shadow-xs">
+      {/* High-Density Spreadsheet Table (Desktop Only - Strictly Preserved) */}
+      <div className="hidden md:block bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg overflow-hidden shadow-xs">
         <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
           <table className="erp-table">
             <thead>
@@ -342,6 +342,108 @@ export const InventoryView: React.FC = () => {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* =========================================================================
+          Dedicated Mobile Inventory Cards List (Zero Horizontal Scroll!)
+         ========================================================================= */}
+      <div className="md:hidden space-y-2.5">
+        {filteredRows.length === 0 ? (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center text-slate-400">
+            <Boxes className="h-10 w-10 mx-auto mb-2 opacity-30 text-emerald-600" />
+            <p className="font-bold text-sm text-slate-800 dark:text-slate-200">No matching stock batches found</p>
+            <p className="text-xs text-slate-500 mt-1">Try adjusting your filters or search keywords.</p>
+          </div>
+        ) : (
+          filteredRows.map((row, idx) => (
+            <div
+              key={`${row.medicine.id}-${row.batch.id}-${idx}`}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs space-y-2.5"
+            >
+              {/* Header: Medicine Name & Health Badge */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
+                    {row.medicine.name}
+                  </h4>
+                  <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                    {row.medicine.genericName}
+                  </p>
+                </div>
+                <span
+                  className={`inline-block px-2 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
+                    row.statusType === 'HEALTHY'
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                      : row.statusType === 'LOW_STOCK'
+                      ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950/50 dark:text-yellow-300'
+                      : row.statusType === 'NEAR_EXPIRY'
+                      ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/50 dark:text-orange-300'
+                      : 'bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300'
+                  }`}
+                >
+                  {row.statusType === 'HEALTHY' && '● Healthy'}
+                  {row.statusType === 'LOW_STOCK' && '▲ Low Stock'}
+                  {row.statusType === 'NEAR_EXPIRY' && `⏱ ${row.diffDays}d Left`}
+                  {row.statusType === 'EXPIRED' && '✖ Expired'}
+                </span>
+              </div>
+
+              {/* Batch & Rack Strip */}
+              <div className="flex items-center justify-between text-[11px] font-mono bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800">
+                <span>Batch: <strong className="text-slate-800 dark:text-slate-200">{row.batch.batchNumber}</strong></span>
+                <span>Rack: <strong className="text-slate-800 dark:text-slate-200">{row.batch.rackLocation}</strong></span>
+                <span className={row.statusType === 'EXPIRED' ? 'text-red-600 font-bold' : row.statusType === 'NEAR_EXPIRY' ? 'text-orange-600 font-bold' : 'text-slate-600'}>
+                  Exp: {row.batch.expiryDate}
+                </span>
+              </div>
+
+              {/* 3 Metrics: Stock, MRP, Margin */}
+              <div className="grid grid-cols-3 gap-1.5 text-center font-mono text-xs">
+                <div className="p-1.5 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="text-[9px] uppercase text-slate-400 font-sans block">Stock</span>
+                  <span className={`font-black ${row.statusType === 'LOW_STOCK' ? 'text-rose-600' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                    {row.batch.availableQuantity}
+                  </span>
+                </div>
+                <div className="p-1.5 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="text-[9px] uppercase text-slate-400 font-sans block">MRP</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    ₹{(row.batch.saleRate || row.batch.mrp).toFixed(2)}
+                  </span>
+                </div>
+                <div className="p-1.5 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span className="text-[9px] uppercase text-slate-400 font-sans block">Margin</span>
+                  <span className="font-bold text-emerald-700">
+                    {row.marginPercent}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Bottom Actions Row */}
+              <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-xs">
+                <span className="text-[10px] text-slate-400 font-mono">
+                  Val: ₹{row.stockValuation.toFixed(0)}
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => handleOpenAdjust(row.medicine, row.batch)}
+                    className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-200 text-[11px] font-bold flex items-center gap-1"
+                  >
+                    <Edit className="h-3 w-3" />
+                    <span>Adjust</span>
+                  </button>
+                  <button
+                    onClick={() => handlePrintBarcode(row.medicine, row.batch)}
+                    className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 text-slate-600 dark:text-slate-300"
+                    title="Print Barcode"
+                  >
+                    <QrCode className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
       {/* MODAL: Add Medicine & Batch to Inventory Manually */}

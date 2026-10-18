@@ -178,8 +178,8 @@ export const CustomerManagementView: React.FC = () => {
         />
       </div>
 
-      {/* High-Density Customer Table */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg overflow-hidden shadow-xs">
+      {/* High-Density Customer Table (Desktop Only - Strictly Preserved) */}
+      <div className="hidden md:block bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg overflow-hidden shadow-xs">
         <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
           <table className="erp-table">
             <thead>
@@ -291,6 +291,107 @@ export const CustomerManagementView: React.FC = () => {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* =========================================================================
+          Dedicated Mobile Patients Khata Cards List (Zero Horizontal Scroll!)
+         ========================================================================= */}
+      <div className="md:hidden space-y-2.5">
+        {filtered.length === 0 ? (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center text-slate-400">
+            <Users className="h-10 w-10 mx-auto mb-2 opacity-30 text-emerald-600" />
+            <p className="font-bold text-sm text-slate-800 dark:text-slate-200">No matching patients found</p>
+            <p className="text-xs text-slate-500 mt-1">Try adjusting your search query or phone number.</p>
+          </div>
+        ) : (
+          filtered.map((c) => {
+            const stats = getCustomerPurchaseStats(c);
+            const member = memberships.find(
+              (m) => m.customerPhone === c.phone || (m.customerId && m.customerId === c.id)
+            );
+            const isMemberActive = Boolean(member && member.status === 'ACTIVE');
+
+            return (
+              <div
+                key={c.id}
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs space-y-2.5"
+              >
+                {/* Header: Name, Club badge, Phone */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h4
+                        onClick={() => handleOpenHistory(c)}
+                        className="font-bold text-xs text-slate-900 dark:text-slate-100 hover:text-emerald-700 cursor-pointer truncate"
+                      >
+                        {c.name}
+                      </h4>
+                      {isMemberActive && (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[8.5px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                          <Crown className="h-2.5 w-2.5 text-amber-500" />
+                          Club Member
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                      📞 {c.phone} {c.doctorName ? `• Dr. ${c.doctorName}` : ''}
+                    </p>
+                  </div>
+
+                  {/* Current Due Badge */}
+                  <div className="text-right shrink-0">
+                    <span className="text-[9px] uppercase text-slate-400 block font-sans">Current Due</span>
+                    <span className={`font-mono font-black text-sm ${c.currentDue > 0 ? 'text-rose-600' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                      ₹{c.currentDue.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Purchase Stats */}
+                <div className="flex items-center justify-between text-[11px] font-mono bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800">
+                  <span>
+                    Last: <strong className="text-slate-800 dark:text-slate-200">{stats.lastInvoiceDate !== 'Never' ? stats.lastInvoiceDate : 'None'}</strong>
+                  </span>
+                  <span>
+                    Last Mo: <strong className="text-purple-700 dark:text-purple-400">₹{stats.lastMonthTotalSpend.toFixed(0)}</strong>
+                  </span>
+                  <span>
+                    Limit: <strong className="text-slate-600">₹{c.creditLimit}</strong>
+                  </span>
+                </div>
+
+                {/* Bottom Actions Row */}
+                <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    {c.currentDue > 0 && (
+                      <button
+                        onClick={() => sendWhatsAppDueReminder(c)}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] flex items-center gap-1 shadow-xs"
+                      >
+                        <MessageSquare className="h-3 w-3" />
+                        <span>Remind</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleOpenHistory(c)}
+                      className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-200 text-[11px] font-bold"
+                    >
+                      History
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => handleOpenEdit(c)}
+                    className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100"
+                    title="Edit Customer"
+                  >
+                    <Edit className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
 
       {/* MODAL: Comprehensive Customer Last Month Purchase History */}
