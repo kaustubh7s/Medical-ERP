@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { usePharmacy } from '@/lib/store';
 import { SUPABASE_SQL_SCHEMA } from '@/lib/supabaseClient';
 import {
@@ -22,6 +22,10 @@ import {
   XCircle,
   AlertCircle,
   Radio,
+  CloudLightning,
+  Server,
+  ArrowUpCircle,
+  ArrowDownCircle,
 } from 'lucide-react';
 
 export const SettingsBackupView: React.FC = () => {
@@ -61,6 +65,84 @@ export const SettingsBackupView: React.FC = () => {
       }
     } catch {}
   }, []);
+
+  // Neon Cloud PostgreSQL State & Handlers
+  const [neonHealth, setNeonHealth] = useState<any | null>(null);
+  const [isPingingNeon, setIsPingingNeon] = useState(false);
+  const [isSyncingToNeon, setIsSyncingToNeon] = useState(false);
+  const [isPullingFromNeon, setIsPullingFromNeon] = useState(false);
+  const [neonSyncToast, setNeonSyncToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handlePingNeon = useCallback(async () => {
+    setIsPingingNeon(true);
+    try {
+      const res = await fetch('/api/neon/health', { cache: 'no-store' });
+      const data = await res.json();
+      setNeonHealth(data);
+    } catch {
+      setNeonHealth({ status: 'ERROR', message: 'Failed to connect to Neon' });
+    } finally {
+      setIsPingingNeon(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    handlePingNeon();
+  }, [handlePingNeon]);
+
+  const handlePushToNeon = async () => {
+    setIsSyncingToNeon(true);
+    setNeonSyncToast(null);
+    try {
+      const jsonStr = exportDataBackup();
+      const payload = JSON.parse(jsonStr);
+      const res = await fetch('/api/neon/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: payload, cashierName: storeName || 'CarePlus Pharmacist' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setNeonSyncToast({
+          type: 'success',
+          text: `Synced ${data.medicinesCount} medicines & ${data.invoicesCount} invoices to Neon Cloud Database!`,
+        });
+        handlePingNeon();
+      } else {
+        setNeonSyncToast({ type: 'error', text: data.error || 'Failed to sync to Neon' });
+      }
+    } catch (e: any) {
+      setNeonSyncToast({ type: 'error', text: e.message || 'Sync failed' });
+    } finally {
+      setIsSyncingToNeon(false);
+    }
+  };
+
+  const handlePullFromNeon = async () => {
+    if (!confirm('Pull latest data from Neon Cloud? This will update local items and invoices to match the cloud database.')) {
+      return;
+    }
+    setIsPullingFromNeon(true);
+    setNeonSyncToast(null);
+    try {
+      const res = await fetch('/api/neon/sync', { cache: 'no-store' });
+      const data = await res.json();
+      if (data.hasData && data.data) {
+        importDataBackup(JSON.stringify(data.data));
+        setNeonSyncToast({
+          type: 'success',
+          text: `Pulled from Neon Cloud! (Last updated: ${new Date(data.updatedAt).toLocaleString()})`,
+        });
+        handlePingNeon();
+      } else {
+        setNeonSyncToast({ type: 'error', text: data.message || 'No data found in Neon Cloud yet.' });
+      }
+    } catch (e: any) {
+      setNeonSyncToast({ type: 'error', text: e.message || 'Pull failed' });
+    } finally {
+      setIsPullingFromNeon(false);
+    }
+  };
 
   const [copiedSchema, setCopiedSchema] = useState(false);
   const [saveToast, setSaveToast] = useState(false);
@@ -585,11 +667,145 @@ export const SettingsBackupView: React.FC = () => {
         </div>
       </div>
 
+      {/* Live Neon Cloud PostgreSQL Database Card */}
+      <div className="p-6 rounded-3xl border border-emerald-500/30 bg-gradient-to-br from-emerald-50/40 via-white to-teal-50/30 dark:from-emerald-950/20 dark:via-slate-900 dark:to-slate-900 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-100 dark:border-emerald-900/30 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-emerald-600 text-white shadow-md shadow-emerald-600/20">
+              <CloudLightning className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-black text-base text-slate-900 dark:text-slate-100">
+                  Neon Cloud PostgreSQL Database
+                </h3>
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">
+                  Live Cloud
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Serverless PostgreSQL in Singapore (1 GB Free Tier) with instant sync across mobile &amp; laptop.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePingNeon}
+              disabled={isPingingNeon}
+              className="px-3.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isPingingNeon ? 'animate-spin' : ''}`} />
+              <span>Ping Neon</span>
+            </button>
+
+            <div
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 ${
+                neonHealth?.status === 'CONNECTED'
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                  : 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800'
+              }`}
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  neonHealth?.status === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+                }`}
+              />
+              <span>
+                {neonHealth?.status === 'CONNECTED'
+                  ? `Connected • ${neonHealth.latencyMs}ms (Singapore)`
+                  : 'Connecting to Neon...'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {neonSyncToast && (
+          <div
+            className={`p-3 rounded-2xl text-xs font-bold flex items-center gap-2 ${
+              neonSyncToast.type === 'success'
+                ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 border border-emerald-300'
+                : 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200 border border-rose-300'
+            }`}
+          >
+            {neonSyncToast.type === 'success' ? (
+              <CheckCircle className="h-4 w-4 shrink-0 text-emerald-600" />
+            ) : (
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+            )}
+            <span>{neonSyncToast.text}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-800 border border-emerald-100 dark:border-emerald-900/40 flex flex-col justify-between space-y-3">
+            <div>
+              <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 font-bold text-xs">
+                <ArrowUpCircle className="h-4 w-4" />
+                <span>Push Local Data to Neon Cloud</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Upload all current medicines, batches, customers, and dispensed invoices to your secure cloud database.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handlePushToNeon}
+              disabled={isSyncingToNeon}
+              className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 disabled:opacity-50 transition-all"
+            >
+              {isSyncingToNeon ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Syncing to Neon Cloud...</span>
+                </>
+              ) : (
+                <>
+                  <CloudLightning className="h-4 w-4" />
+                  <span>Push &amp; Sync to Neon Cloud</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-800 border border-teal-100 dark:border-teal-900/40 flex flex-col justify-between space-y-3">
+            <div>
+              <div className="flex items-center gap-2 text-teal-700 dark:text-teal-400 font-bold text-xs">
+                <ArrowDownCircle className="h-4 w-4" />
+                <span>Pull &amp; Restore from Neon Cloud</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Download the latest cloud state onto this device. Perfect when opening on a new phone, tablet, or cashier laptop.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handlePullFromNeon}
+              disabled={isPullingFromNeon}
+              className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-teal-700 dark:hover:bg-teal-600 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 transition-all"
+            >
+              {isPullingFromNeon ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Pulling from Neon Cloud...</span>
+                </>
+              ) : (
+                <>
+                  <Server className="h-4 w-4" />
+                  <span>Pull Latest from Neon Cloud</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Backup & Disaster Recovery */}
       <div className="p-6 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-4">
         <h3 className="font-bold text-base text-slate-900 dark:text-slate-100 flex items-center gap-2">
           <Database className="h-4 w-4 text-indigo-600" />
-          Local Database Backup & Disaster Recovery (JSON Archive)
+          Local Database Backup &amp; Disaster Recovery (JSON Archive)
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

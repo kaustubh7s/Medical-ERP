@@ -14,6 +14,7 @@
     "test:returns": "npx tsx tests/sales-return-cash-drawer.test.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
     "html5-qrcode": "^2.3.8",
@@ -27,6 +28,7 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@netlify/plugin-nextjs": "^5.16.2",
     "@tailwindcss/postcss": "^4",
     "@types/canvas-confetti": "^1.9.0",
     "@types/jsbarcode": "^3.11.4",
