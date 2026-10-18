@@ -16,12 +16,6 @@ import {
   TrendingUp,
   FileSpreadsheet,
   AlertCircle,
-  QrCode,
-  Smartphone,
-  CheckCircle2,
-  AlertTriangle,
-  X,
-  Barcode,
 } from 'lucide-react';
 
 export const MedicineMasterView: React.FC = () => {
@@ -34,14 +28,6 @@ export const MedicineMasterView: React.FC = () => {
     deleteMedicine,
     toggleFavoriteMedicine,
     toggleMedicineMembershipDiscount,
-    barcodeMappings,
-    addBarcodeMapping,
-    removeBarcodeMapping,
-    assignBarcodeToMedicine,
-    pendingScannedBarcode,
-    setPendingScannedBarcode,
-    phoneScannerStatus,
-    setIsPhoneScannerModalOpen,
   } = usePharmacy();
 
   const [search, setSearch] = useState('');
@@ -64,8 +50,6 @@ export const MedicineMasterView: React.FC = () => {
   const [reorderLevel, setReorderLevel] = useState(20);
   const [requiresPrescription, setRequiresPrescription] = useState(false);
   const [isMembershipEligible, setIsMembershipEligible] = useState(true);
-  const [barcode, setBarcode] = useState('');
-  const [barcodeWarning, setBarcodeWarning] = useState<string | null>(null);
 
   // Initial Batch fields (if adding new medicine)
   const [initialBatchNo, setInitialBatchNo] = useState('');
@@ -75,42 +59,15 @@ export const MedicineMasterView: React.FC = () => {
   const [initialMrp, setInitialMrp] = useState(85);
   const [initialRack, setInitialRack] = useState('Rack A-1');
 
-  // Dedicated QR / Barcode Mapping Modal states
-  const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
-  const [mappingMedicineId, setMappingMedicineId] = useState('');
-  const [mappingBarcode, setMappingBarcode] = useState('');
-  const [mappingUnitType, setMappingUnitType] = useState<'STRIP' | 'LOOSE'>('STRIP');
-  const [mappingNotes, setMappingNotes] = useState('');
-  const [mappingError, setMappingError] = useState<string | null>(null);
-  const [mappingSuccess, setMappingSuccess] = useState<string | null>(null);
-
-  // Listen for real-time scans delivered while in Medicine Master
-  React.useEffect(() => {
-    const handleMasterScan = (e: Event) => {
-      const customEvent = e as CustomEvent<{ code: string }>;
-      const { code } = customEvent.detail;
-      if (isAddModalOpen) {
-        setBarcode(code);
-        setBarcodeWarning(null);
-      } else if (isMappingModalOpen) {
-        setMappingBarcode(code);
-        setMappingError(null);
-      }
-    };
-    window.addEventListener('pharmacy:phone_scan_master', handleMasterScan);
-    return () => window.removeEventListener('pharmacy:phone_scan_master', handleMasterScan);
-  }, [isAddModalOpen, isMappingModalOpen]);
-
   const filtered = medicines.filter(
     (m) =>
       m.name.toLowerCase().includes(search.toLowerCase()) ||
       m.genericName.toLowerCase().includes(search.toLowerCase()) ||
       m.manufacturer.toLowerCase().includes(search.toLowerCase()) ||
-      m.hsnCode.includes(search) ||
-      (m.barcode && m.barcode.includes(search))
+      m.hsnCode.includes(search)
   );
 
-  const handleOpenAdd = (prefilledBarcode?: string) => {
+  const handleOpenAdd = () => {
     setEditingMed(null);
     setName('');
     setGenericName('');
@@ -125,8 +82,6 @@ export const MedicineMasterView: React.FC = () => {
     setReorderLevel(25);
     setRequiresPrescription(false);
     setIsMembershipEligible(true);
-    setBarcode(prefilledBarcode || pendingScannedBarcode || '');
-    setBarcodeWarning(null);
     setInitialBatchNo(`BTH-${Math.floor(1000 + Math.random() * 9000)}`);
     setInitialExpiry('2027-12-31');
     setInitialQty(100);
@@ -151,8 +106,6 @@ export const MedicineMasterView: React.FC = () => {
     setReorderLevel(m.reorderLevel);
     setRequiresPrescription(m.requiresPrescription);
     setIsMembershipEligible(m.isMembershipDiscountEligible !== false);
-    setBarcode(m.barcode || '');
-    setBarcodeWarning(null);
     setIsAddModalOpen(true);
   };
 
@@ -161,71 +114,8 @@ export const MedicineMasterView: React.FC = () => {
     setDetailModalOpen(true);
   };
 
-  const handleOpenMappingModal = (prefillMedIdOrCode?: string) => {
-    const isMed = medicines.find((m) => m.id === prefillMedIdOrCode);
-    if (isMed) {
-      setMappingMedicineId(isMed.id);
-      setMappingBarcode(pendingScannedBarcode || '');
-    } else {
-      const code = prefillMedIdOrCode || pendingScannedBarcode || '';
-      setMappingBarcode(code);
-      setMappingMedicineId(medicines[0]?.id || '');
-    }
-    setMappingUnitType('STRIP');
-    setMappingNotes('');
-    setMappingError(null);
-    setMappingSuccess(null);
-    setIsMappingModalOpen(true);
-  };
-
-  const handleSaveMapping = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!mappingBarcode.trim()) {
-      setMappingError('Please provide a barcode or QR code value.');
-      return;
-    }
-    const targetMed = medicines.find((m) => m.id === mappingMedicineId);
-    if (!targetMed) {
-      setMappingError('Please select a valid medicine.');
-      return;
-    }
-
-    const res = assignBarcodeToMedicine(
-      targetMed.id,
-      mappingBarcode.trim(),
-      mappingUnitType,
-      mappingNotes.trim() || undefined
-    );
-
-    if (!res.success) {
-      setMappingError(res.error || 'Failed to save barcode mapping.');
-    } else {
-      setMappingSuccess(`Successfully linked packaging barcode "${mappingBarcode.trim()}" to "${targetMed.name}" (${mappingUnitType})!`);
-      if (pendingScannedBarcode === mappingBarcode.trim()) {
-        setPendingScannedBarcode(null);
-      }
-      setTimeout(() => {
-        setMappingSuccess(null);
-        setIsMappingModalOpen(false);
-      }, 1200);
-    }
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmedBarcode = barcode.trim();
-
-    // Check duplicate barcode
-    if (trimmedBarcode) {
-      const duplicateMed = medicines.find(
-        (m) => m.barcode === trimmedBarcode && (!editingMed || m.id !== editingMed.id)
-      );
-      if (duplicateMed) {
-        setBarcodeWarning(`Barcode/QR "${trimmedBarcode}" is already assigned to "${duplicateMed.name}". Please use a unique barcode.`);
-        return;
-      }
-    }
-
     if (editingMed) {
       updateMedicine(editingMed.id, {
         name,
@@ -241,7 +131,6 @@ export const MedicineMasterView: React.FC = () => {
         reorderLevel,
         requiresPrescription,
         isMembershipDiscountEligible: isMembershipEligible,
-        barcode: trimmedBarcode || undefined,
       });
     } else {
       addMedicine({
@@ -259,7 +148,6 @@ export const MedicineMasterView: React.FC = () => {
         maxStockLevel: reorderLevel * 4,
         requiresPrescription,
         isMembershipDiscountEligible: isMembershipEligible,
-        barcode: trimmedBarcode || undefined,
         initialBatch: initialBatchNo
           ? {
               batchNumber: initialBatchNo,
@@ -271,16 +159,11 @@ export const MedicineMasterView: React.FC = () => {
               mrp: initialMrp,
               saleRate: initialMrp,
               rackLocation: initialRack,
-              barcode: trimmedBarcode || `890${Math.floor(1000000000 + Math.random() * 9000000000)}`,
+              barcode: `890${Math.floor(1000000000 + Math.random() * 9000000000)}`,
             }
           : undefined,
       });
     }
-
-    if (trimmedBarcode && pendingScannedBarcode === trimmedBarcode) {
-      setPendingScannedBarcode(null);
-    }
-
     setIsAddModalOpen(false);
   };
 
@@ -335,106 +218,14 @@ export const MedicineMasterView: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Phone QR Scanner Button */}
-          <button
-            onClick={() => setIsPhoneScannerModalOpen(true)}
-            title="Connect or configure Wireless Phone QR Scanner"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded border text-xs font-bold transition-all active:scale-95 ${
-              phoneScannerStatus === 'CONNECTED'
-                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 shadow-xs'
-                : phoneScannerStatus === 'WAITING'
-                ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20 animate-pulse'
-                : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <Smartphone className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-            <span>Phone Scanner</span>
-            <span
-              className={`h-2 w-2 rounded-full ${
-                phoneScannerStatus === 'CONNECTED'
-                  ? 'bg-emerald-500'
-                  : phoneScannerStatus === 'WAITING'
-                  ? 'bg-amber-500 animate-ping'
-                  : 'bg-slate-400'
-              }`}
-            />
-          </button>
-
-          {/* Scan & Link Barcode Button */}
-          <button
-            onClick={() => handleOpenMappingModal()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-indigo-400 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold text-xs hover:bg-indigo-100 dark:hover:bg-indigo-900/50 shadow-xs"
-            title="Scan packaging barcode on medicine box and rename/link it to your medicine without labeling"
-          >
-            <Barcode className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-            <span>Scan & Link Barcode</span>
-          </button>
-
-          {/* QR / Barcode Mappings Button */}
-          <button
-            onClick={() => handleOpenMappingModal()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold text-xs hover:bg-indigo-100 dark:hover:bg-indigo-900/50"
-          >
-            <QrCode className="h-3.5 w-3.5" />
-            <span>QR Mappings ({barcodeMappings.length})</span>
-          </button>
-
-          <button
-            onClick={() => handleOpenAdd()}
-            className="flex items-center gap-1 px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            <span>+ Add New Medicine</span>
-          </button>
-        </div>
+        <button
+          onClick={handleOpenAdd}
+          className="flex items-center gap-1 px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span>+ Add New Medicine</span>
+        </button>
       </div>
-
-      {/* Live Phone Scanned QR Code Alert Banner */}
-      {pendingScannedBarcode && (
-        <div className="p-3 rounded-lg border border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 flex flex-wrap items-center justify-between gap-3 text-xs shadow-xs animate-in fade-in slide-in-from-top-1">
-          <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0">
-              <Smartphone className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="font-bold text-indigo-950 dark:text-indigo-200">
-                Incoming Phone QR Scan Received!
-              </p>
-              <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                Code:{' '}
-                <code className="font-mono font-bold bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-800">
-                  {pendingScannedBarcode}
-                </code>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleOpenMappingModal(pendingScannedBarcode)}
-              className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
-            >
-              <QrCode className="h-3.5 w-3.5" />
-              <span>Map to Existing Medicine</span>
-            </button>
-            <button
-              onClick={() => handleOpenAdd(pendingScannedBarcode)}
-              className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Register New Medicine with this QR</span>
-            </button>
-            <button
-              onClick={() => setPendingScannedBarcode(null)}
-              className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              title="Dismiss"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Search Input */}
       <div className="relative">
@@ -458,7 +249,6 @@ export const MedicineMasterView: React.FC = () => {
                 <th>Brand Name</th>
                 <th>Generic Composition</th>
                 <th>Dosage / Pack</th>
-                <th className="text-center">Packaging Barcode</th>
                 <th>HSN Code</th>
                 <th className="text-center">GST %</th>
                 <th className="text-center">Schedule</th>
@@ -493,36 +283,6 @@ export const MedicineMasterView: React.FC = () => {
 
                   <td className="text-slate-600 dark:text-slate-300 text-[11px]">{m.genericName}</td>
                   <td className="text-slate-500 text-[10px] font-mono">{m.packSize}</td>
-
-                  {/* Packaging Barcode with 1-Click Link Button */}
-                  <td className="text-center font-mono text-[11px]">
-                    {m.barcode ? (
-                      <div className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
-                        <span className="font-bold text-slate-800 dark:text-slate-200" title={m.barcode}>
-                          {m.barcode.length > 13 ? `${m.barcode.slice(0, 11)}…` : m.barcode}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenMappingModal(m.id)}
-                          title="Re-scan / Change packaging barcode"
-                          className="p-0.5 text-slate-400 hover:text-indigo-600 rounded"
-                        >
-                          <Barcode className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleOpenMappingModal(m.id)}
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-indigo-400 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
-                        title="Scan packaging barcode on box to link without labeling"
-                      >
-                        <Barcode className="h-3 w-3" />
-                        <span>+ Link</span>
-                      </button>
-                    )}
-                  </td>
-
                   <td className="font-mono text-slate-500 text-[11px]">{m.hsnCode}</td>
                   <td className="text-center font-mono text-slate-600">{m.gstRate}%</td>
 
@@ -742,50 +502,6 @@ export const MedicineMasterView: React.FC = () => {
             </div>
           </div>
 
-          {/* Barcode / Packaging QR Code Field */}
-          <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                <QrCode className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-                Barcode / Medicine Packaging QR Code
-              </label>
-              {pendingScannedBarcode && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBarcode(pendingScannedBarcode);
-                    setBarcodeWarning(null);
-                  }}
-                  className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
-                >
-                  <Smartphone className="h-3 w-3" />
-                  <span>Insert Phone Scanned ({pendingScannedBarcode.slice(0, 14)}...)</span>
-                </button>
-              )}
-            </div>
-            <div className="relative">
-              <input
-                type="text"
-                value={barcode}
-                onChange={(e) => {
-                  setBarcode(e.target.value);
-                  setBarcodeWarning(null);
-                }}
-                placeholder="Scan with phone, barcode gun, or paste QR text/GTIN..."
-                className="w-full px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 font-mono text-xs bg-white dark:bg-slate-900"
-              />
-            </div>
-            {barcodeWarning && (
-              <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
-                <AlertTriangle className="h-3 w-3 shrink-0" />
-                <span>{barcodeWarning}</span>
-              </p>
-            )}
-            <p className="text-[10px] text-slate-500">
-              When scanned at POS billing, this QR code will automatically look up and add this formulation to the active bill.
-            </p>
-          </div>
-
           <div className="grid grid-cols-3 gap-2.5">
             <div>
               <label className="text-[11px] font-bold block mb-1">Manufacturer</label>
@@ -938,214 +654,6 @@ export const MedicineMasterView: React.FC = () => {
             Save Drug Master Specifications
           </button>
         </form>
-      </Modal>
-
-      {/* MODAL: QR / Barcode Mappings Directory & Association Manager */}
-      <Modal
-        isOpen={isMappingModalOpen}
-        onClose={() => {
-          setIsMappingModalOpen(false);
-          setMappingError(null);
-          setMappingSuccess(null);
-        }}
-        title="QR & Barcode Inventory Mappings"
-        subtitle="Associate packaging QR codes, GS1 DataMatrix identifiers, and manufacturer codes to sellable medicine units"
-        maxWidth="xl"
-      >
-        <div className="space-y-4 text-xs">
-          {/* Add / Create Mapping Form */}
-          <form
-            onSubmit={handleSaveMapping}
-            className="p-3 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-300 dark:border-slate-700 space-y-3"
-          >
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2">
-              <h4 className="font-bold text-slate-900 dark:text-slate-100 uppercase text-[11px] flex items-center gap-1.5">
-                <QrCode className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                <span>Map New QR / Barcode to Medicine</span>
-              </h4>
-              {pendingScannedBarcode && (
-                <span className="text-[10px] font-mono font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded border border-indigo-500/30">
-                  📱 Active Phone Scan: {pendingScannedBarcode.slice(0, 16)}...
-                </span>
-              )}
-            </div>
-
-            {mappingError && (
-              <div className="p-2 rounded bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
-                <span className="font-semibold">{mappingError}</span>
-              </div>
-            )}
-
-            {mappingSuccess && (
-              <div className="p-2 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                <span className="font-semibold">{mappingSuccess}</span>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-              <div className="md:col-span-2">
-                <label className="text-[11px] font-bold block mb-1">Target Medicine Formulation *</label>
-                <select
-                  value={mappingMedicineId}
-                  onChange={(e) => setMappingMedicineId(e.target.value)}
-                  className="w-full px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 text-xs font-semibold bg-white dark:bg-slate-900"
-                  required
-                >
-                  {medicines.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.genericName}) — Stock: {m.totalStock}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold block mb-1">Sellable Unit *</label>
-                <select
-                  value={mappingUnitType}
-                  onChange={(e) => setMappingUnitType(e.target.value as 'STRIP' | 'LOOSE')}
-                  className="w-full px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 text-xs bg-white dark:bg-slate-900"
-                >
-                  <option value="STRIP">Full Pack / Strip</option>
-                  <option value="LOOSE">Cut Strip / Loose Unit</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-[11px] font-bold">Scanned QR Code / Barcode String *</label>
-                  {pendingScannedBarcode && mappingBarcode !== pendingScannedBarcode && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMappingBarcode(pendingScannedBarcode);
-                        setMappingError(null);
-                      }}
-                      className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
-                    >
-                      Use Phone Scan
-                    </button>
-                  )}
-                </div>
-                <input
-                  type="text"
-                  required
-                  value={mappingBarcode}
-                  onChange={(e) => {
-                    setMappingBarcode(e.target.value);
-                    setMappingError(null);
-                  }}
-                  placeholder="e.g. https://careplus.erp/med/DOLO650 or 0108901234567890..."
-                  className="w-full px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 font-mono text-xs bg-white dark:bg-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold block mb-1">Packaging Notes (Optional)</label>
-                <input
-                  type="text"
-                  value={mappingNotes}
-                  onChange={(e) => setMappingNotes(e.target.value)}
-                  placeholder="e.g. Outer cardboard box QR / Strip back barcode"
-                  className="w-full px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 text-xs bg-white dark:bg-slate-900"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setMappingBarcode('');
-                  setMappingNotes('');
-                  setMappingError(null);
-                }}
-                className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-              >
-                Clear
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs transition-colors"
-              >
-                Save QR Mapping
-              </button>
-            </div>
-          </form>
-
-          {/* Existing Mappings Directory Table */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="font-bold text-slate-900 dark:text-slate-100 uppercase text-[11px]">
-                Registered QR & Barcode Mappings ({barcodeMappings.length})
-              </h4>
-              <span className="text-[10px] text-slate-500">
-                Exact matches instantly populate POS billing items
-              </span>
-            </div>
-
-            <div className="max-h-60 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-lg">
-              <table className="erp-table">
-                <thead>
-                  <tr>
-                    <th>Barcode / QR Value</th>
-                    <th>Mapped Medicine</th>
-                    <th className="text-center">Sellable Unit</th>
-                    <th>Notes</th>
-                    <th className="text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {barcodeMappings.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="text-center py-4 text-slate-400">
-                        No custom QR / barcode mappings registered yet.
-                      </td>
-                    </tr>
-                  ) : (
-                    barcodeMappings.map((m) => (
-                      <tr key={m.id}>
-                        <td className="font-mono font-bold text-xs text-slate-900 dark:text-slate-100 max-w-[220px] truncate" title={m.code}>
-                          {m.code}
-                        </td>
-                        <td className="font-bold text-slate-900 dark:text-slate-100">
-                          {m.medicineName}
-                        </td>
-                        <td className="text-center">
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${
-                              m.unitType === 'LOOSE'
-                                ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30'
-                                : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30'
-                            }`}
-                          >
-                            {m.unitType === 'LOOSE' ? 'Loose Tablet' : 'Full Strip'}
-                          </span>
-                        </td>
-                        <td className="text-slate-500 text-[11px]">
-                          {m.notes || '—'}
-                        </td>
-                        <td className="text-right">
-                          <button
-                            onClick={() => removeBarcodeMapping(m.id)}
-                            className="p-1 rounded text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-                            title="Remove mapping"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
       </Modal>
     </div>
   );

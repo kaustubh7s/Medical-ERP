@@ -30,8 +30,6 @@ import {
   PendingMembershipRegistration,
   InvoiceItem,
   CashDrawerTransaction,
-  PhoneScannerStatus,
-  PhoneScannerSessionState,
   BarcodeQRMapping,
 } from '@/types/pharmacy';
 import {
@@ -191,22 +189,6 @@ interface PharmacyStoreContextType {
   ) => { success: boolean; error?: string; medicine?: Medicine };
   findMedicineByBarcodeOrQR: (code: string) => { medicine: Medicine; batch?: Batch; unitType?: 'STRIP' | 'LOOSE' } | null;
 
-  // Phone QR Scanner State & Controls
-  phoneScannerSession: PhoneScannerSessionState | null;
-  phoneScannerStatus: PhoneScannerStatus;
-  lastScannedItem: {
-    value: string;
-    timestamp: number;
-    medicineName?: string;
-    status: 'MATCHED' | 'UNKNOWN' | 'IGNORED_WORKFLOW';
-    unitType?: 'STRIP' | 'LOOSE';
-  } | null;
-  pendingScannedBarcode: string | null;
-  setPendingScannedBarcode: (val: string | null) => void;
-  startPhoneScannerSession: (customHost?: string) => Promise<PhoneScannerSessionState | null>;
-  disconnectPhoneScanner: () => Promise<void>;
-  isPhoneScannerModalOpen: boolean;
-  setIsPhoneScannerModalOpen: (open: boolean) => void;
 
   // Backup & Reset
   resetToDemoData: () => void;
@@ -252,19 +234,6 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
   // Barcode & QR Mapping State
   const [barcodeMappings, setBarcodeMappings] = useState<BarcodeQRMapping[]>(INITIAL_BARCODE_MAPPINGS);
 
-  // Phone QR Scanner State
-  const [phoneScannerSession, setPhoneScannerSession] = useState<PhoneScannerSessionState | null>(null);
-  const [phoneScannerStatus, setPhoneScannerStatus] = useState<PhoneScannerStatus>('DISCONNECTED');
-  const [lastScannedItem, setLastScannedItem] = useState<{
-    value: string;
-    timestamp: number;
-    medicineName?: string;
-    status: 'MATCHED' | 'UNKNOWN' | 'IGNORED_WORKFLOW';
-    unitType?: 'STRIP' | 'LOOSE';
-  } | null>(null);
-  const [pendingScannedBarcode, setPendingScannedBarcode] = useState<string | null>(null);
-  const [isPhoneScannerModalOpen, setIsPhoneScannerModalOpen] = useState(false);
-  const sseRef = React.useRef<EventSource | null>(null);
 
   // Online / Offline Listeners
   useEffect(() => {
@@ -2217,9 +2186,6 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       return [newMap, ...filtered];
     });
 
-    if (pendingScannedBarcode === code) {
-      setPendingScannedBarcode(null);
-    }
 
     logAudit(
       'UPDATE',
@@ -2281,223 +2247,6 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     return null;
   };
 
-  // ==========================================
-  // WIRELESS PHONE SCANNER INTEGRATION
-  // ==========================================
-  const connectScannerSSE = (sessionId: string, token: string) => {
-    if (typeof window === 'undefined') return;
-
-    if (sseRef.current) {
-      sseRef.current.close();
-      sseRef.current = null;
-    }
-
-    try {
-      const es = new EventSource(`/api/scanner/events?sessionId=${sessionId}&token=${token}`);
-      sseRef.current = es;
-
-      es.addEventListener('INIT', (e: MessageEvent) => {
-        try {
-          const initData = JSON.parse(e.data);
-          if (initData.connectedDevice) {
-            setPhoneScannerStatus('CONNECTED');
-            setPhoneScannerSession((prev) =>
-              prev ? { ...prev, connectedDevice: initData.connectedDevice, status: 'CONNECTED' } : null
-            );
-          }
-        } catch {}
-      });
-
-      es.addEventListener('DEVICE_CONNECTED', (e: MessageEvent) => {
-        try {
-          const dev = JSON.parse(e.data);
-          setPhoneScannerStatus('CONNECTED');
-          setPhoneScannerSession((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  status: 'CONNECTED',
-                  connectedDevice: { name: dev.deviceName, connectedAt: dev.connectedAt },
-                }
-              : null
-          );
-          logAudit('UPDATE', 'Phone QR Scanner', `Wireless Phone Scanner paired: ${dev.deviceName}`);
-        } catch {}
-      });
-
-      es.addEventListener('DEVICE_DISCONNECTED', () => {
-        setPhoneScannerStatus('WAITING');
-        setPhoneScannerSession((prev) =>
-          prev ? { ...prev, status: 'WAITING', connectedDevice: undefined } : null
-        );
-        logAudit('UPDATE', 'Phone QR Scanner', 'Phone disconnected from scanner session.');
-      });
-
-      es.addEventListener('SCAN_RECEIVED', (e: MessageEvent) => {
-        try {
-          const scan = JSON.parse(e.data);
-          handleIncomingScan(scan.value);
-        } catch (err) {
-          console.error('Failed to parse scan payload:', err);
-        }
-      });
-
-      es.onerror = () => {
-        // EventSource will auto-reconnect
-      };
-    } catch (err) {
-      console.error('SSE connect error:', err);
-    }
-  };
-
-  const startPhoneScannerSession = async (customHost?: string): Promise<PhoneScannerSessionState | null> => {
-    try {
-      if (sseRef.current) {
-        sseRef.current.close();
-        sseRef.current = null;
-      }
-
-      const res = await fetch('/api/scanner/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ activeWorkflow: activeTab }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to start phone scanner session');
-      }
-
-      const sessionState: PhoneScannerSessionState = {
-        sessionId: data.sessionId,
-        pairingToken: data.pairingToken,
-        pairingPin: data.pairingPin,
-        expiresAt: data.expiresAt,
-        status: 'WAITING',
-      };
-
-      setPhoneScannerSession(sessionState);
-      setPhoneScannerStatus('WAITING');
-
-      connectScannerSSE(data.sessionId, data.pairingToken);
-      return sessionState;
-    } catch (err: any) {
-      console.error('Failed to start scanner session:', err);
-      logAudit('UPDATE', 'Phone QR Scanner', `Failed to create session: ${err.message}`);
-      return null;
-    }
-  };
-
-  const disconnectPhoneScanner = async () => {
-    if (sseRef.current) {
-      sseRef.current.close();
-      sseRef.current = null;
-    }
-    if (phoneScannerSession) {
-      try {
-        await fetch(`/api/scanner/session?sessionId=${phoneScannerSession.sessionId}`, {
-          method: 'DELETE',
-        });
-      } catch {
-        // ignore
-      }
-    }
-    setPhoneScannerSession(null);
-    setPhoneScannerStatus('DISCONNECTED');
-    logAudit('UPDATE', 'Phone QR Scanner', 'Disconnected wireless phone scanner.');
-  };
-
-  // Sync active workflow to server when activeTab changes
-  useEffect(() => {
-    if (phoneScannerSession?.sessionId) {
-      fetch('/api/scanner/session', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: phoneScannerSession.sessionId,
-          activeWorkflow: activeTab,
-        }),
-      }).catch(() => {});
-    }
-  }, [activeTab, phoneScannerSession?.sessionId]);
-
-  const handleIncomingScan = (rawCode: string) => {
-    if (!rawCode) return;
-    const code = rawCode.trim();
-
-    if (activeTab === 'pos') {
-      const match = findMedicineByBarcodeOrQR(code);
-      if (match) {
-        setLastScannedItem({
-          value: code,
-          timestamp: Date.now(),
-          medicineName: match.medicine.name,
-          status: 'MATCHED',
-          unitType: match.unitType,
-        });
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(
-            new CustomEvent('pharmacy:phone_scan', {
-              detail: { code, match },
-            })
-          );
-        }
-        logAudit(
-          'SALE',
-          'Phone QR Scanner',
-          `Scanned and matched medicine "${match.medicine.name}" (Code: ${code}) into POS bill.`
-        );
-      } else {
-        setPendingScannedBarcode(code);
-        setLastScannedItem({
-          value: code,
-          timestamp: Date.now(),
-          status: 'UNKNOWN',
-        });
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(
-            new CustomEvent('pharmacy:phone_scan', {
-              detail: { code, match: null },
-            })
-          );
-        }
-        logAudit(
-          'UPDATE',
-          'Phone QR Scanner',
-          `Unknown QR / Barcode scanned: "${code}". Prompting user to link to existing medicine.`
-        );
-      }
-    } else if (activeTab === 'medicines') {
-      setPendingScannedBarcode(code);
-      setLastScannedItem({
-        value: code,
-        timestamp: Date.now(),
-        status: 'MATCHED',
-      });
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('pharmacy:phone_scan_master', {
-            detail: { code },
-          })
-        );
-      }
-      logAudit(
-        'UPDATE',
-        'Medicine Master',
-        `Scanned QR code "${code}" transferred to Medicine Master barcode field.`
-      );
-    } else {
-      setLastScannedItem({
-        value: code,
-        timestamp: Date.now(),
-        status: 'IGNORED_WORKFLOW',
-      });
-      logAudit(
-        'UPDATE',
-        'Phone QR Scanner',
-        `Scanned code "${code}" ignored because active screen is "${activeTab}".`
-      );
-    }
-  };
 
   const exportDataBackup = (): string => {
     const exportObject = {
@@ -2621,16 +2370,6 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         assignBarcodeToMedicine,
         findMedicineByBarcodeOrQR,
 
-        // Phone QR Scanner
-        phoneScannerSession,
-        phoneScannerStatus,
-        lastScannedItem,
-        pendingScannedBarcode,
-        setPendingScannedBarcode,
-        startPhoneScannerSession,
-        disconnectPhoneScanner,
-        isPhoneScannerModalOpen,
-        setIsPhoneScannerModalOpen,
 
         resetToDemoData,
         importDataBackup,

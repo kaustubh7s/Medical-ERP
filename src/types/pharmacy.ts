@@ -663,28 +663,6 @@ export interface TerminalPaymentResponse {
   completedAt?: string;
 }
 
-export type PhoneScannerStatus = 'DISCONNECTED' | 'WAITING' | 'CONNECTED';
-
-export interface PhoneScannerSessionState {
-  sessionId: string;
-  pairingToken: string;
-  pairingPin: string;
-  expiresAt: number;
-  status: PhoneScannerStatus;
-  connectedDevice?: {
-    name: string;
-    userAgent?: string;
-    ip?: string;
-    connectedAt: number;
-  };
-  lastScan?: {
-    value: string;
-    timestamp: number;
-    matchedMedicineName?: string;
-    status: 'MATCHED' | 'UNKNOWN' | 'IGNORED_WORKFLOW';
-    unitType?: 'STRIP' | 'LOOSE';
-  };
-}
 
 export interface BarcodeQRMapping {
   id: string;

@@ -7,8 +7,6 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { MobileNavigation } from '@/components/layout/MobileNavigation';
 import { NotificationDrawer } from '@/components/layout/NotificationDrawer';
 import { CommandPalette } from '@/components/layout/CommandPalette';
-import { PhoneScannerModal } from '@/components/common/PhoneScannerModal';
-import { PhoneScannerFloatingWidget } from '@/components/common/PhoneScannerFloatingWidget';
 
 // Module Views
 import { DashboardView } from '@/components/modules/DashboardView';
@@ -38,7 +36,7 @@ import { SettingsBackupView } from '@/components/modules/SettingsBackupView';
 import { MembershipView } from '@/components/modules/MembershipView';
 
 function PharmacyApp() {
-  const { activeTab, setActiveTab, darkMode, isPhoneScannerModalOpen, setIsPhoneScannerModalOpen } = usePharmacy();
+  const { activeTab, setActiveTab, darkMode } = usePharmacy();
   const [mounted, setMounted] = useState(false);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
@@ -208,13 +206,6 @@ function PharmacyApp() {
         isOpen={isNotificationOpen}
         onClose={() => setIsNotificationOpen(false)}
       />
-
-      <PhoneScannerModal
-        isOpen={isPhoneScannerModalOpen}
-        onClose={() => setIsPhoneScannerModalOpen(false)}
-      />
-
-      <PhoneScannerFloatingWidget />
     </div>
   );
 }

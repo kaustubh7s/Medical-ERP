@@ -17,7 +17,6 @@ import {
   Wifi,
   Sparkles,
   Command,
-  Smartphone,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -42,8 +41,6 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCommand, onOpenNotificatio
     offlineQueueCount,
     toggleNetworkSimulation,
     syncOfflineQueue,
-    phoneScannerStatus,
-    setIsPhoneScannerModalOpen,
   } = usePharmacy();
 
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
@@ -83,31 +80,6 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCommand, onOpenNotificatio
           <ShoppingCart className="h-4 w-4" />
           <span>New Sale (POS)</span>
           <span className="rounded bg-black/20 px-1.5 py-0.5 text-[10px]">F2</span>
-        </button>
-
-        {/* Phone QR Scanner Button */}
-        <button
-          onClick={() => setIsPhoneScannerModalOpen(true)}
-          title="Connect or configure Wireless Phone QR Scanner"
-          className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-all active:scale-95 ${
-            phoneScannerStatus === 'CONNECTED'
-              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 shadow-sm shadow-emerald-500/20'
-              : phoneScannerStatus === 'WAITING'
-              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20 animate-pulse'
-              : 'border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          <Smartphone className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-          <span className="hidden sm:inline">Phone Scanner</span>
-          <span
-            className={`h-2 w-2 rounded-full ${
-              phoneScannerStatus === 'CONNECTED'
-                ? 'bg-emerald-500'
-                : phoneScannerStatus === 'WAITING'
-                ? 'bg-amber-500 animate-ping'
-                : 'bg-slate-400'
-            }`}
-          />
         </button>
       </div>
 
