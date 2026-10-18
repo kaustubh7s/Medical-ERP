@@ -16,6 +16,7 @@ import {
   TrendingUp,
   FileSpreadsheet,
   AlertCircle,
+  Barcode,
 } from 'lucide-react';
 
 export const MedicineMasterView: React.FC = () => {
@@ -28,6 +29,8 @@ export const MedicineMasterView: React.FC = () => {
     deleteMedicine,
     toggleFavoriteMedicine,
     toggleMedicineMembershipDiscount,
+    assignBarcodeToMedicine,
+    barcodeMappings,
   } = usePharmacy();
 
   const [search, setSearch] = useState('');
@@ -59,13 +62,40 @@ export const MedicineMasterView: React.FC = () => {
   const [initialMrp, setInitialMrp] = useState(85);
   const [initialRack, setInitialRack] = useState('Rack A-1');
 
+  // Packaging Barcode Quick Mapping Modal State
+  const [isBarcodeMapModalOpen, setIsBarcodeMapModalOpen] = useState(false);
+  const [targetMedForBarcode, setTargetMedForBarcode] = useState<Medicine | null>(null);
+  const [packagingBarcode, setPackagingBarcode] = useState('');
+  const [packagingUnitType, setPackagingUnitType] = useState<'STRIP' | 'LOOSE'>('STRIP');
+  const [mappingMessage, setMappingMessage] = useState('');
+
   const filtered = medicines.filter(
     (m) =>
       m.name.toLowerCase().includes(search.toLowerCase()) ||
       m.genericName.toLowerCase().includes(search.toLowerCase()) ||
       m.manufacturer.toLowerCase().includes(search.toLowerCase()) ||
-      m.hsnCode.includes(search)
+      m.hsnCode.includes(search) ||
+      (m.barcode && m.barcode.toLowerCase().includes(search.toLowerCase())) ||
+      m.batches.some((b) => b.barcode && b.barcode.toLowerCase().includes(search.toLowerCase())) ||
+      barcodeMappings.some(
+        (map) => map.medicineId === m.id && map.code.toLowerCase().includes(search.toLowerCase())
+      )
   );
+
+  const handleSavePackagingBarcode = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetMedForBarcode || !packagingBarcode.trim()) return;
+
+    const res = assignBarcodeToMedicine(targetMedForBarcode.id, packagingBarcode.trim(), packagingUnitType);
+    if (res.success && res.medicine) {
+      setMappingMessage(`✓ Barcode "${packagingBarcode.trim()}" linked to ${res.medicine.name}!`);
+      setTimeout(() => {
+        setIsBarcodeMapModalOpen(false);
+        setMappingMessage('');
+        setPackagingBarcode('');
+      }, 1200);
+    }
+  };
 
   const handleOpenAdd = () => {
     setEditingMed(null);
@@ -234,7 +264,7 @@ export const MedicineMasterView: React.FC = () => {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by brand name, generic composition, manufacturer, or HSN code..."
+          placeholder="Search by brand name, generic composition, manufacturer, HSN, or scan packaging barcode..."
           className="w-full pl-9 pr-4 py-1.5 rounded border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-semibold"
         />
       </div>
@@ -346,6 +376,18 @@ export const MedicineMasterView: React.FC = () => {
                         className="p-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 text-slate-600"
                       >
                         <Edit className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setTargetMedForBarcode(m);
+                          setPackagingBarcode('');
+                          setMappingMessage('');
+                          setIsBarcodeMapModalOpen(true);
+                        }}
+                        title="Scan & Link Manufacturer Packaging Barcode"
+                        className="p-1 rounded border border-indigo-200 dark:border-indigo-900 bg-indigo-50/50 dark:bg-indigo-950/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300"
+                      >
+                        <Barcode className="h-3 w-3" />
                       </button>
                     </div>
                   </td>
@@ -461,6 +503,67 @@ export const MedicineMasterView: React.FC = () => {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            {/* Section 3: Packaging Barcode & GTIN Mappings */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <h4 className="font-bold text-slate-900 dark:text-slate-100 uppercase text-[11px] flex items-center gap-1.5">
+                  <Barcode className="h-3.5 w-3.5 text-indigo-600" />
+                  3. Manufacturer Packaging Barcodes & GTIN Mappings
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetMedForBarcode(selectedMed);
+                    setPackagingBarcode('');
+                    setMappingMessage('');
+                    setIsBarcodeMapModalOpen(true);
+                  }}
+                  className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] flex items-center gap-1 shadow-2xs"
+                >
+                  <Plus className="h-3 w-3" />
+                  Link Packaging Barcode
+                </button>
+              </div>
+
+              <div className="p-2.5 rounded bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500">Primary ERP Barcode / GTIN:</span>
+                  <code className="font-mono font-bold bg-white dark:bg-slate-900 px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700">
+                    {selectedMed.barcode || 'Not Assigned'}
+                  </code>
+                </div>
+
+                {barcodeMappings.filter((bm) => bm.medicineId === selectedMed.id).length > 0 ? (
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                      Linked Physical Packaging Barcodes ({barcodeMappings.filter((bm) => bm.medicineId === selectedMed.id).length}):
+                    </span>
+                    <div className="space-y-1">
+                      {barcodeMappings
+                        .filter((bm) => bm.medicineId === selectedMed.id)
+                        .map((bm) => (
+                          <div
+                            key={bm.id}
+                            className="flex items-center justify-between p-1.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs"
+                          >
+                            <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                              {bm.code}
+                            </span>
+                            <span className="text-[10px] text-slate-500">
+                              {bm.unitType} • {bm.notes || 'Packaging Barcode'}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400 italic">
+                    No physical packaging barcodes mapped yet. Click &quot;Link Packaging Barcode&quot; to scan and associate the manufacturer&apos;s box or strip barcode without re-labeling!
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -653,6 +756,114 @@ export const MedicineMasterView: React.FC = () => {
           >
             Save Drug Master Specifications
           </button>
+        </form>
+      </Modal>
+
+      {/* MODAL: Scan & Link Packaging Barcode */}
+      <Modal
+        isOpen={isBarcodeMapModalOpen}
+        onClose={() => {
+          setIsBarcodeMapModalOpen(false);
+          setMappingMessage('');
+          setPackagingBarcode('');
+        }}
+        title={targetMedForBarcode ? `Link Barcode: ${targetMedForBarcode.name}` : 'Link Barcode'}
+        subtitle="Scan physical packaging barcode using USB/Bluetooth scanner or enter manually"
+        maxWidth="md"
+      >
+        <form onSubmit={handleSavePackagingBarcode} className="space-y-4 py-1">
+          <div className="p-3 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs text-indigo-900 dark:text-indigo-200 flex items-start gap-2.5">
+            <span className="text-xl">🔫</span>
+            <div className="space-y-0.5">
+              <p className="font-bold">Plug-and-Play Scanner Ready</p>
+              <p className="text-[11px] text-indigo-700 dark:text-indigo-300">
+                Point your handheld USB or Bluetooth barcode gun at the medicine box, blister pack, or bottle. The scanned barcode will automatically fill below.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Scanned / Entered Barcode *
+            </label>
+            <input
+              type="text"
+              required
+              autoFocus
+              value={packagingBarcode}
+              onChange={(e) => setPackagingBarcode(e.target.value)}
+              placeholder="e.g. 8901234567890 (Scan with handheld gun)"
+              className="w-full font-mono text-sm font-bold px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Dispensing Pack Unit for this Barcode
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label
+                className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-xs font-medium transition-all ${
+                  packagingUnitType === 'STRIP'
+                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 font-bold'
+                    : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="packagingUnitType"
+                  checked={packagingUnitType === 'STRIP'}
+                  onChange={() => setPackagingUnitType('STRIP')}
+                  className="accent-indigo-600"
+                />
+                Full Pack / Strip
+              </label>
+
+              <label
+                className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-xs font-medium transition-all ${
+                  packagingUnitType === 'LOOSE'
+                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 font-bold'
+                    : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="packagingUnitType"
+                  checked={packagingUnitType === 'LOOSE'}
+                  onChange={() => setPackagingUnitType('LOOSE')}
+                  className="accent-indigo-600"
+                />
+                Loose Tablet / Single Unit
+              </label>
+            </div>
+          </div>
+
+          {mappingMessage && (
+            <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs font-medium text-emerald-700 dark:text-emerald-300">
+              {mappingMessage}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => {
+                setIsBarcodeMapModalOpen(false);
+                setMappingMessage('');
+                setPackagingBarcode('');
+              }}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!packagingBarcode.trim()}
+              className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg shadow-sm"
+            >
+              Save Barcode Mapping
+            </button>
+          </div>
         </form>
       </Modal>
     </div>

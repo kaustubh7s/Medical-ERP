@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePharmacy } from '@/lib/store';
 import {
   Medicine,
@@ -16,6 +16,9 @@ import {
 import { PrintInvoiceModal } from '@/components/common/PrintInvoiceModal';
 import { Modal } from '@/components/common/Modal';
 import { parseUnitsPerPack, getPerUnitRate, formatStockDisplay } from '@/lib/units';
+import { useHandheldScanner } from '@/lib/useHandheldScanner';
+import { playScanSound } from '@/lib/scannerAudio';
+import { HandheldScannerWidget, ScanFeedback } from '@/components/common/HandheldScannerWidget';
 import {
   Search,
   ShoppingCart,
@@ -118,6 +121,11 @@ export const POSBillingView: React.FC = () => {
     cancelPendingMembership,
     setActiveTab,
     updateSettings,
+    findMedicineByBarcodeOrQR,
+    assignBarcodeToMedicine,
+    barcodeMappings,
+    soundEnabled,
+    toggleSound,
   } = usePharmacy();
 
   // Search & Input state
@@ -216,6 +224,17 @@ export const POSBillingView: React.FC = () => {
   // Completed Invoice & Print Modal
   const [completedInvoice, setCompletedInvoice] = useState<any | null>(null);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+
+  // Hardware Handheld Barcode Scanner Feedback State
+  const [scanFeedback, setScanFeedback] = useState<ScanFeedback | null>(null);
+  const scanFeedbackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Quick Barcode Mapping Modal State (for unmapped packaging barcodes)
+  const [isBarcodeLinkModalOpen, setIsBarcodeLinkModalOpen] = useState(false);
+  const [unmappedBarcodeToLink, setUnmappedBarcodeToLink] = useState('');
+  const [selectedMedIdForLink, setSelectedMedIdForLink] = useState('');
+  const [selectedUnitTypeForLink, setSelectedUnitTypeForLink] = useState<'STRIP' | 'LOOSE'>('STRIP');
+  const [linkSuccessMsg, setLinkSuccessMsg] = useState('');
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
@@ -920,6 +939,115 @@ export const POSBillingView: React.FC = () => {
     setCashTendered('');
     setCreditDownPayment('0');
     searchInputRef.current?.focus();
+  };
+
+  // Plug-and-play Hardware Handheld Barcode Scanner Handler
+  const handleBarcodeScanned = useCallback(
+    (scannedCode: string, durationMs?: number) => {
+      const code = scannedCode.trim();
+      if (!code) return;
+
+      const match = findMedicineByBarcodeOrQR(code);
+
+      if (match && match.medicine && match.batch) {
+        const med = match.medicine;
+        const batch = match.batch;
+
+        if (batch.availableQuantity <= 0) {
+          playScanSound('error', soundEnabled);
+          alert(`⚠️ Scanned Medicine "${med.name}" (Batch: ${batch.batchNumber}) is out of stock!`);
+          return;
+        }
+
+        const packCount = parseUnitsPerPack(med.packSize, med.dosageForm, med.unitsPerPack);
+        const preferredUnit = match.unitType || 'STRIP';
+        const isLoose = preferredUnit === 'LOOSE' && packCount > 1;
+
+        const existingIndex = cart.findIndex(
+          (i) => i.medicineId === med.id && i.batchId === batch.id && i.unitType === preferredUnit
+        );
+
+        if (existingIndex >= 0) {
+          const currentQty = cart[existingIndex].quantity;
+          updateItemQuantity(existingIndex, currentQty + 1);
+          playScanSound('duplicate', soundEnabled);
+
+          setScanFeedback({
+            type: 'DUPLICATE',
+            code,
+            medicineName: med.name,
+            batchNumber: batch.batchNumber,
+            expiryDate: batch.expiryDate,
+            quantity: currentQty + 1,
+            rate: cart[existingIndex].rate,
+            unitType: preferredUnit,
+            durationMs,
+          });
+        } else {
+          addItemToCart(med, batch, 1, preferredUnit);
+          playScanSound('success', soundEnabled);
+
+          const stripRate = batch.saleRate || batch.mrp;
+          const rate = isLoose ? getPerUnitRate(stripRate, packCount) : stripRate;
+
+          setScanFeedback({
+            type: 'SUCCESS',
+            code,
+            medicineName: med.name,
+            batchNumber: batch.batchNumber,
+            expiryDate: batch.expiryDate,
+            quantity: 1,
+            rate,
+            unitType: preferredUnit,
+            durationMs,
+          });
+        }
+
+        setSearchTerm('');
+        setIsDropdownOpen(false);
+
+        if (scanFeedbackTimeoutRef.current) clearTimeout(scanFeedbackTimeoutRef.current);
+        scanFeedbackTimeoutRef.current = setTimeout(() => {
+          setScanFeedback(null);
+        }, 3500);
+      } else {
+        playScanSound('error', soundEnabled);
+        setScanFeedback({
+          type: 'UNKNOWN',
+          code,
+          durationMs,
+        });
+
+        if (scanFeedbackTimeoutRef.current) clearTimeout(scanFeedbackTimeoutRef.current);
+        scanFeedbackTimeoutRef.current = setTimeout(() => {
+          setScanFeedback(null);
+        }, 6000);
+      }
+    },
+    [cart, findMedicineByBarcodeOrQR, soundEnabled, addItemToCart, updateItemQuantity]
+  );
+
+  const { lastScan, totalScans } = useHandheldScanner({
+    enabled: !isPaymentModalOpen,
+    onScan: (detail) => {
+      handleBarcodeScanned(detail.code, detail.durationMs);
+    },
+  });
+
+  const handleSaveBarcodeLink = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!unmappedBarcodeToLink.trim() || !selectedMedIdForLink) return;
+
+    const res = assignBarcodeToMedicine(selectedMedIdForLink, unmappedBarcodeToLink.trim(), selectedUnitTypeForLink);
+    if (res.success && res.medicine) {
+      setLinkSuccessMsg(`Linked barcode "${unmappedBarcodeToLink}" to ${res.medicine.name}!`);
+      // Auto-add to cart now that it is linked
+      handleBarcodeScanned(unmappedBarcodeToLink.trim());
+      setTimeout(() => {
+        setIsBarcodeLinkModalOpen(false);
+        setLinkSuccessMsg('');
+      }, 1000);
+    }
   };
 
   // Hold / Resume Bill
@@ -1630,6 +1758,16 @@ export const POSBillingView: React.FC = () => {
                   }
                 } else if (e.key === 'Enter') {
                   e.preventDefault();
+                  const term = searchTerm.trim();
+                  // 1. First check if typed/scanned string is an exact barcode/QR match
+                  if (term.length >= 3) {
+                    const barcodeMatch = findMedicineByBarcodeOrQR(term);
+                    if (barcodeMatch) {
+                      handleBarcodeScanned(term);
+                      return;
+                    }
+                  }
+                  // 2. Otherwise select highlighted dropdown medicine
                   if (filteredMedicines.length > 0) {
                     const targetMed =
                       filteredMedicines[Math.min(highlightedIndex, filteredMedicines.length - 1)] ||
@@ -2018,6 +2156,21 @@ export const POSBillingView: React.FC = () => {
             <span>F6 ({heldBills.length})</span>
           </button>
 
+          {/* Handheld Barcode Scanner Status & Diagnostic Pill */}
+          <HandheldScannerWidget
+            lastScan={lastScan}
+            totalScans={totalScans}
+            scanFeedback={scanFeedback}
+            onDismissFeedback={() => setScanFeedback(null)}
+            onOpenMappingModal={(code) => {
+              setUnmappedBarcodeToLink(code);
+              setSelectedMedIdForLink(medicines[0]?.id || '');
+              setSelectedUnitTypeForLink('STRIP');
+              setIsBarcodeLinkModalOpen(true);
+            }}
+            soundEnabled={soundEnabled}
+            onToggleSound={toggleSound}
+          />
         </div>
       </div>
 
@@ -3756,6 +3909,112 @@ export const POSBillingView: React.FC = () => {
             onCancel={() => setIsQuickEnrollOpen(false)}
           />
         </div>
+      </Modal>
+
+      {/* MODAL 7: Quick Barcode Link & Rename to Medicine */}
+      <Modal
+        isOpen={isBarcodeLinkModalOpen}
+        onClose={() => {
+          setIsBarcodeLinkModalOpen(false);
+          setLinkSuccessMsg('');
+        }}
+        title="Link Packaging Barcode to Medicine"
+        subtitle="Associate physical manufacturer barcode with ERP medicine formulation without relabeling"
+        maxWidth="lg"
+      >
+        <form onSubmit={handleSaveBarcodeLink} className="space-y-4 py-1">
+          <div className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2.5">
+            <span className="text-lg">🔫</span>
+            <div>
+              <p className="font-bold">Scanned Barcode: <span className="font-mono bg-amber-200/60 dark:bg-amber-900/60 px-1.5 py-0.5 rounded text-amber-900 dark:text-amber-100">{unmappedBarcodeToLink}</span></p>
+              <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
+                This barcode is not yet mapped in your medicine master. Select the medicine below to link it. Next time you scan this box, strip, or bottle, it will add directly to billing!
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Select Medicine to Link
+            </label>
+            <select
+              value={selectedMedIdForLink}
+              onChange={(e) => setSelectedMedIdForLink(e.target.value)}
+              required
+              className="w-full text-xs font-medium px-3 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">-- Choose Medicine Formulation --</option>
+              {medicines.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.dosageForm}) - {m.manufacturer} [Stock: {m.totalStock}]
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Default Dispensing Unit
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-xs font-medium transition-all ${
+                selectedUnitTypeForLink === 'STRIP'
+                  ? 'border-primary-500 bg-primary-50 dark:bg-primary-950/30 text-primary-700 dark:text-primary-300 font-bold'
+                  : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+              }`}>
+                <input
+                  type="radio"
+                  name="unitTypeLink"
+                  checked={selectedUnitTypeForLink === 'STRIP'}
+                  onChange={() => setSelectedUnitTypeForLink('STRIP')}
+                  className="accent-primary-600"
+                />
+                Full Strip / Box / Bottle
+              </label>
+
+              <label className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-xs font-medium transition-all ${
+                selectedUnitTypeForLink === 'LOOSE'
+                  ? 'border-primary-500 bg-primary-50 dark:bg-primary-950/30 text-primary-700 dark:text-primary-300 font-bold'
+                  : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+              }`}>
+                <input
+                  type="radio"
+                  name="unitTypeLink"
+                  checked={selectedUnitTypeForLink === 'LOOSE'}
+                  onChange={() => setSelectedUnitTypeForLink('LOOSE')}
+                  className="accent-primary-600"
+                />
+                Loose Tablet / Individual Unit
+              </label>
+            </div>
+          </div>
+
+          {linkSuccessMsg && (
+            <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs font-medium text-emerald-700 dark:text-emerald-300">
+              ✓ {linkSuccessMsg}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => {
+                setIsBarcodeLinkModalOpen(false);
+                setLinkSuccessMsg('');
+              }}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!selectedMedIdForLink}
+              className="px-4 py-2 text-xs font-bold text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg shadow-sm"
+            >
+              Save Link & Add to Cart
+            </button>
+          </div>
+        </form>
       </Modal>
 
       {/* Invoice Print & WhatsApp Preview Modal */}
