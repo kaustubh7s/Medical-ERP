@@ -473,6 +473,83 @@ async function runTests() {
     assert.strictEqual(result.batch?.batchNumber, 'DL24A');
   });
 
+  // Test 13: Deduplication prevents adding 2 items or strips when phone app streams compound QR + Enter echo within 1500ms
+  runTest('13. Deduplication prevents adding 2 items/strips on a single physical scan', () => {
+    let cart: CartItem[] = [];
+    let lastProcessedBarcode = '';
+    let lastProcessedTime = 0;
+    let lastProcessedItemKey = '';
+    let lastProcessedItemTime = 0;
+
+    const handleScanWithDebounce = (code: string, timestamp: number) => {
+      if (code === lastProcessedBarcode && timestamp - lastProcessedTime < 1500) {
+        return { action: 'SUPPRESSED' };
+      }
+      const match = findMedicineByBarcodeOrQR(code);
+      if (!match || !match.batch) return { action: 'NOT_FOUND' };
+
+      const itemKey = `${match.medicine.id}-${match.batch.id}`;
+      if (itemKey === lastProcessedItemKey && timestamp - lastProcessedItemTime < 1500) {
+        return { action: 'SUPPRESSED' };
+      }
+
+      lastProcessedBarcode = code;
+      lastProcessedTime = timestamp;
+      lastProcessedItemKey = itemKey;
+      lastProcessedItemTime = timestamp;
+
+      const res = simulateScanAddToCart(cart, code);
+      cart = res.cart;
+      return { action: res.action };
+    };
+
+    const scanCode = 'UG-7721|EXP:2027-07-31|MRP:204.5';
+    const t0 = 1000;
+
+    // Trigger 1: Initial scan from scanner
+    const t1Res = handleScanWithDebounce(scanCode, t0);
+    assert.strictEqual(t1Res.action, 'ADDED');
+    assert.strictEqual(cart.length, 1);
+    assert.strictEqual(cart[0].quantity, 1, 'Initial scan must add strictly 1 unit/strip');
+
+    // Trigger 2: Rapid echo from Enter keydown or input event within 300ms
+    const t2Res = handleScanWithDebounce(scanCode, t0 + 300);
+    assert.strictEqual(t2Res.action, 'SUPPRESSED', 'Rapid echo of same code must be suppressed');
+    assert.strictEqual(cart[0].quantity, 1, 'Quantity must remain 1');
+
+    // Trigger 3: Rapid echo with partial token (e.g. "UG-7721") resolving to same med and batch within 500ms
+    const t3Res = handleScanWithDebounce('UG-7721', t0 + 500);
+    assert.strictEqual(t3Res.action, 'SUPPRESSED', 'Rapid echo of partial token resolving to same batch must be suppressed');
+    assert.strictEqual(cart[0].quantity, 1, 'Quantity must remain 1');
+
+    // Trigger 4: Legitimate second scan 2.5 seconds later (cashier intentionally scanning 2nd physical pack)
+    const t4Res = handleScanWithDebounce(scanCode, t0 + 2500);
+    assert.strictEqual(t4Res.action, 'INCREMENTED', 'Intentional scan after 1500ms should increment');
+    assert.strictEqual(cart[0].quantity, 2, 'Quantity increments to 2 only on intentional separate scan');
+  });
+
+  // Test 14: Multi-batch medicine isolation: only scanned batch is added, never both batches
+  runTest('14. Multi-batch isolation: adds strictly the scanned batch, never both batches', () => {
+    let cart: CartItem[] = [];
+    const scannedCode = 'UG-7721|EXP:2027-07-31|MRP:204.5';
+
+    // Augmentin 625 Duo has 2 batches in mockMedicines: 'AUG-7721' (active) and 'AUG99' (expired)
+    const med = mockMedicines.find((m) => m.id === 'med-002');
+    assert.ok(med && med.batches.length >= 2, 'Augmentin must have at least 2 batches in test dataset');
+
+    const res = simulateScanAddToCart(cart, scannedCode);
+    cart = res.cart;
+
+    assert.strictEqual(cart.length, 1, 'Cart must contain exactly 1 line item');
+    assert.strictEqual(cart[0].medicineId, 'med-002');
+    assert.strictEqual(cart[0].batchNumber, 'AUG-7721', 'Must add ONLY the scanned batch AUG-7721');
+    assert.strictEqual(cart[0].quantity, 1, 'Must add strictly 1 strip');
+
+    // Ensure other batch 'AUG99' was NOT added
+    const hasOtherBatch = cart.some((i) => i.batchNumber === 'AUG99');
+    assert.strictEqual(hasOtherBatch, false, 'Other batch AUG99 must NOT be added to the cart');
+  });
+
   console.log('\n========================================================================');
   console.log(`   TEST RESULTS: ${passed} PASSED | ${failed} FAILED                     `);
   console.log('========================================================================\n');

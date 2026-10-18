@@ -235,6 +235,10 @@ export const POSBillingView: React.FC = () => {
   const [selectedMedIdForLink, setSelectedMedIdForLink] = useState('');
   const [selectedUnitTypeForLink, setSelectedUnitTypeForLink] = useState<'STRIP' | 'LOOSE'>('STRIP');
   const [linkSuccessMsg, setLinkSuccessMsg] = useState('');
+  const lastProcessedBarcodeRef = useRef<string>('');
+  const lastProcessedTimeRef = useRef<number>(0);
+  const lastProcessedItemKeyRef = useRef<string>('');
+  const lastProcessedItemTimeRef = useRef<number>(0);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
@@ -333,6 +337,8 @@ export const POSBillingView: React.FC = () => {
   useEffect(() => {
     if (!isBatchModalOpen || !selectedMed) return;
 
+    const modalOpenTime = Date.now();
+
     const handleBatchKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -342,6 +348,8 @@ export const POSBillingView: React.FC = () => {
         setBatchHighlightedIndex((prev) => (prev > 0 ? prev - 1 : selectedMed.batches.length - 1));
       } else if (e.key === 'Enter') {
         e.preventDefault();
+        // Prevent instant selection by trailing Enter keystrokes from barcode scanners or search inputs
+        if (Date.now() - modalOpenTime < 350) return;
         const chosenBatch = selectedMed.batches[batchHighlightedIndex];
         if (chosenBatch && chosenBatch.availableQuantity > 0) {
           addItemToCart(selectedMed, chosenBatch);
@@ -351,6 +359,7 @@ export const POSBillingView: React.FC = () => {
         setIsBatchModalOpen(false);
         searchInputRef.current?.focus();
       } else if (/^[1-9]$/.test(e.key)) {
+        if (Date.now() - modalOpenTime < 350) return;
         const idx = parseInt(e.key, 10) - 1;
         if (selectedMed.batches[idx] && selectedMed.batches[idx].availableQuantity > 0) {
           e.preventDefault();
@@ -947,11 +956,30 @@ export const POSBillingView: React.FC = () => {
       const code = scannedCode.trim();
       if (!code) return;
 
+      const now = Date.now();
+      // 1. Raw code deduplication (1500ms window)
+      if (code === lastProcessedBarcodeRef.current && now - lastProcessedTimeRef.current < 1500) {
+        // Suppress rapid duplicate echo from multiple event triggers
+        return;
+      }
+
       const match = findMedicineByBarcodeOrQR(code);
 
       if (match && match.medicine && match.batch) {
         const med = match.medicine;
         const batch = match.batch;
+        const itemKey = `${med.id}-${batch.id}`;
+
+        // 2. Resolved medicine + batch deduplication (1500ms window)
+        // Prevents composite QR + partial code dual triggers from adding 2 items or multiple batches
+        if (itemKey === lastProcessedItemKeyRef.current && now - lastProcessedItemTimeRef.current < 1500) {
+          return;
+        }
+
+        lastProcessedBarcodeRef.current = code;
+        lastProcessedTimeRef.current = now;
+        lastProcessedItemKeyRef.current = itemKey;
+        lastProcessedItemTimeRef.current = now;
 
         if (batch.availableQuantity <= 0) {
           playScanSound('error', soundEnabled);
@@ -1008,12 +1036,16 @@ export const POSBillingView: React.FC = () => {
         }
         setSearchTerm('');
         setIsDropdownOpen(false);
+        setIsBatchModalOpen(false);
+        setSelectedMed(null);
 
         if (scanFeedbackTimeoutRef.current) clearTimeout(scanFeedbackTimeoutRef.current);
         scanFeedbackTimeoutRef.current = setTimeout(() => {
           setScanFeedback(null);
         }, 3500);
       } else {
+        lastProcessedBarcodeRef.current = code;
+        lastProcessedTimeRef.current = now;
         playScanSound('error', soundEnabled);
         setScanFeedback({
           type: 'UNKNOWN',
@@ -1031,7 +1063,7 @@ export const POSBillingView: React.FC = () => {
   );
 
   const { lastScan, totalScans } = useHandheldScanner({
-    enabled: !isPaymentModalOpen,
+    enabled: !isPaymentModalOpen && !isCustomerModalOpen && !isHeldModalOpen && !isBatchModalOpen,
     onScan: (detail) => {
       handleBarcodeScanned(detail.code, detail.durationMs);
     },
@@ -1743,17 +1775,9 @@ export const POSBillingView: React.FC = () => {
               onChange={(e) => {
                 const val = e.target.value;
                 setSearchTerm(val);
-                // Instant auto-add if a compound 2D barcode payload is scanned directly into search input
-                if (val.includes('|') && (val.includes('EXP') || val.includes('MRP') || val.split('|').length >= 3)) {
-                  const match = findMedicineByBarcodeOrQR(val);
-                  if (match) {
-                    if (searchInputRef.current) searchInputRef.current.value = '';
-                    setSearchTerm('');
-                    handleBarcodeScanned(val);
-                    return;
-                  }
+                if (val.trim().length > 0) {
+                  setIsDropdownOpen(true);
                 }
-                setIsDropdownOpen(true);
               }}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
@@ -1772,23 +1796,33 @@ export const POSBillingView: React.FC = () => {
                   }
                 } else if (e.key === 'Enter') {
                   e.preventDefault();
+                  e.stopPropagation();
                   const term = searchTerm.trim();
+                  if (!term) return;
+
                   // 1. First check if typed/scanned string is a barcode/QR match
-                  if (term.length >= 3) {
-                    const barcodeMatch = findMedicineByBarcodeOrQR(term);
-                    if (barcodeMatch) {
-                      if (searchInputRef.current) searchInputRef.current.value = '';
-                      setSearchTerm('');
-                      handleBarcodeScanned(term);
-                      return;
-                    }
+                  const barcodeMatch = findMedicineByBarcodeOrQR(term);
+                  if (barcodeMatch && barcodeMatch.medicine && barcodeMatch.batch) {
+                    if (searchInputRef.current) searchInputRef.current.value = '';
+                    setSearchTerm('');
+                    setIsDropdownOpen(false);
+                    setIsBatchModalOpen(false);
+                    setSelectedMed(null);
+                    handleBarcodeScanned(term);
+                    return;
                   }
-                  // 2. Otherwise select highlighted dropdown medicine
+
+                  // 2. Otherwise select highlighted dropdown medicine ONLY when term is non-empty
                   if (filteredMedicines.length > 0) {
                     const targetMed =
                       filteredMedicines[Math.min(highlightedIndex, filteredMedicines.length - 1)] ||
                       filteredMedicines[0];
-                    if (targetMed) handleSelectMedicine(targetMed);
+                    if (targetMed) {
+                      if (searchInputRef.current) searchInputRef.current.value = '';
+                      setSearchTerm('');
+                      setIsDropdownOpen(false);
+                      handleSelectMedicine(targetMed);
+                    }
                   }
                 } else if (e.key === 'Escape') {
                   e.preventDefault();

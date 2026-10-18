@@ -44,10 +44,22 @@ export function useHandheldScanner({
     }
   }, []);
 
+  const lastScanCodeRef = useRef<string>('');
+  const lastScanTimeRef = useRef<number>(0);
+
   const triggerScan = useCallback(
     (codeToScan: string, source: 'HARDWARE_WEDGE' | 'FAST_INPUT' | 'BLUETOOTH_PHONE', durationMs: number = 0, averageInterKey: number = 0) => {
       const trimmed = codeToScan.trim();
       if (!trimmed || trimmed.length < minBarcodeLength) return;
+
+      const now = Date.now();
+      if (trimmed === lastScanCodeRef.current && now - lastScanTimeRef.current < 1500) {
+        // Suppress rapid echo/duplicate scan trigger
+        resetBuffer();
+        return;
+      }
+      lastScanCodeRef.current = trimmed;
+      lastScanTimeRef.current = now;
 
       // Clean active input so raw text doesn't linger
       const activeEl = document.activeElement as HTMLElement | null;
@@ -154,7 +166,7 @@ export function useHandheldScanner({
           } else {
             resetBuffer();
           }
-        }, 320);
+        }, 500);
       }
     };
 
