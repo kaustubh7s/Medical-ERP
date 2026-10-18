@@ -1003,6 +1003,9 @@ export const POSBillingView: React.FC = () => {
           });
         }
 
+        if (searchInputRef.current) {
+          searchInputRef.current.value = '';
+        }
         setSearchTerm('');
         setIsDropdownOpen(false);
 
@@ -1738,7 +1741,18 @@ export const POSBillingView: React.FC = () => {
                 if (searchTerm.trim().length > 0) setIsDropdownOpen(true);
               }}
               onChange={(e) => {
-                setSearchTerm(e.target.value);
+                const val = e.target.value;
+                setSearchTerm(val);
+                // Instant auto-add if a compound 2D barcode payload is scanned directly into search input
+                if (val.includes('|') && (val.includes('EXP') || val.includes('MRP') || val.split('|').length >= 3)) {
+                  const match = findMedicineByBarcodeOrQR(val);
+                  if (match) {
+                    if (searchInputRef.current) searchInputRef.current.value = '';
+                    setSearchTerm('');
+                    handleBarcodeScanned(val);
+                    return;
+                  }
+                }
                 setIsDropdownOpen(true);
               }}
               onKeyDown={(e) => {
@@ -1759,10 +1773,12 @@ export const POSBillingView: React.FC = () => {
                 } else if (e.key === 'Enter') {
                   e.preventDefault();
                   const term = searchTerm.trim();
-                  // 1. First check if typed/scanned string is an exact barcode/QR match
+                  // 1. First check if typed/scanned string is a barcode/QR match
                   if (term.length >= 3) {
                     const barcodeMatch = findMedicineByBarcodeOrQR(term);
                     if (barcodeMatch) {
+                      if (searchInputRef.current) searchInputRef.current.value = '';
+                      setSearchTerm('');
                       handleBarcodeScanned(term);
                       return;
                     }

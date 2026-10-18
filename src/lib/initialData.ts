@@ -1258,6 +1258,26 @@ export const INITIAL_CASH_DRAWER_TRANSACTIONS: CashDrawerTransaction[] = [];
 
 export const INITIAL_BARCODE_MAPPINGS: BarcodeQRMapping[] = [
   {
+    id: 'map-ug-7721',
+    code: 'UG-7721|EXP:2027-07-31|MRP:204.5',
+    medicineId: 'med-2',
+    medicineName: 'Augmentin 625 Duo',
+    batchNumber: 'AUG-7721',
+    unitType: 'STRIP',
+    mappedAt: '2026-10-18 16:50:00',
+    notes: 'Manufacturer packaging 2D DataMatrix/QR payload',
+  },
+  {
+    id: 'map-ug-7721-short',
+    code: 'UG-7721',
+    medicineId: 'med-2',
+    medicineName: 'Augmentin 625 Duo',
+    batchNumber: 'AUG-7721',
+    unitType: 'STRIP',
+    mappedAt: '2026-10-18 16:50:00',
+    notes: 'Packaging batch strip identifier',
+  },
+  {
     id: 'map-1',
     code: 'https://careplus.rx/med-2/AUG625',
     medicineId: 'med-2',

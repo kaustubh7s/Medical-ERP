@@ -81,16 +81,21 @@ export function useHandheldScanner({
           // If average time between keys is under maxInterKeyDelayMs, or total time is very fast
           const isHardwareScan = averageInterKey <= maxInterKeyDelayMs || totalDuration < 350;
 
-          if (isHardwareScan || (!isInput && buffer.length >= 4)) {
+          if (isHardwareScan || (!isInput && buffer.length >= 4) || buffer.includes('|')) {
             e.preventDefault();
             e.stopPropagation();
 
-            // If an input received the rapid text, clean it up if not the intended input
-            if (isInput && !isBarcodeInput && activeEl && 'value' in activeEl) {
+            // If an input received the rapid text or barcode payload, clean it up so raw text doesn't linger
+            if (isInput && activeEl && 'value' in activeEl) {
               const inputEl = activeEl as HTMLInputElement;
               if (inputEl.value.endsWith(buffer)) {
                 inputEl.value = inputEl.value.slice(0, -buffer.length);
+              } else if (inputEl.value === buffer) {
+                inputEl.value = '';
               }
+              try {
+                inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+              } catch {}
             }
 
             const detail: ScanEventDetail = {

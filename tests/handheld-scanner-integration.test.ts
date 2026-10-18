@@ -1,11 +1,12 @@
 /**
  * Handheld USB/Bluetooth Barcode Scanner Integration Test Suite
- * Tests hardware wedge rapid typing detection, barcode resolution,
- * manufacturer packaging barcode mapping, and FEFO inventory lookup.
+ * Tests hardware wedge rapid typing detection, compound 2D QR codes (UG-7721|EXP:2027-07-31|MRP:204.5),
+ * barcode resolution, manufacturer packaging barcode mapping, and FEFO inventory lookup.
  */
 
 import assert from 'node:assert';
 import { Medicine, Batch, BarcodeQRMapping } from '../src/types/pharmacy';
+import { parseCompoundBarcode } from '../src/lib/barcodeParser';
 
 // Mock Pharmacy Dataset
 const mockMedicines: Medicine[] = [
@@ -74,13 +75,28 @@ const mockMedicines: Medicine[] = [
     hsnCode: '30041010',
     gstRate: 12,
     scheduleType: 'SCHEDULE_H',
-    totalStock: 0,
+    totalStock: 80,
     reorderLevel: 15,
     maxStockLevel: 200,
     requiresPrescription: true,
     isMembershipDiscountEligible: true,
     barcode: '8909876543210',
     batches: [
+      {
+        id: 'bat-201',
+        medicineId: 'med-002',
+        batchNumber: 'AUG-7721',
+        mfgDate: '2025-08-01',
+        expiryDate: '2027-07-31',
+        quantity: 80,
+        availableQuantity: 80,
+        purchaseRate: 142.0,
+        mrp: 204.5,
+        saleRate: 195.0,
+        rackLocation: 'Rack B-2',
+        barcode: '8901234002015',
+        status: 'ACTIVE',
+      },
       {
         id: 'b-003-oos',
         medicineId: 'med-002',
@@ -113,7 +129,7 @@ let mockBarcodeMappings: BarcodeQRMapping[] = [
   },
 ];
 
-// Helper to simulate findMedicineByBarcodeOrQR
+// Helper to simulate store.tsx findMedicineByBarcodeOrQR
 function findMedicineByBarcodeOrQR(
   rawCode: string,
   medicines: Medicine[] = mockMedicines,
@@ -122,8 +138,8 @@ function findMedicineByBarcodeOrQR(
   if (!rawCode) return null;
   const code = rawCode.trim();
 
-  // 1. Check custom barcodeMappings
-  const customMap = mappings.find((m) => m.code === code);
+  // 1. Check custom barcodeMappings (exact raw code match)
+  const customMap = mappings.find((m) => m.code.toLowerCase() === code.toLowerCase());
   if (customMap) {
     const med = medicines.find((m) => m.id === customMap.medicineId);
     if (med) {
@@ -134,29 +150,114 @@ function findMedicineByBarcodeOrQR(
     }
   }
 
-  // 2. Check medicine batches for direct barcode or batch number match
-  for (const med of medicines) {
-    for (const b of med.batches) {
-      if (b.barcode === code || b.batchNumber.toLowerCase() === code.toLowerCase()) {
-        return { medicine: med, batch: b, unitType: 'STRIP' as const };
+  // 2. Parse compound 2D QR / DataMatrix / Barcode payload (e.g. "UG-7721|EXP:2027-07-31|MRP:204.5")
+  const parsed = parseCompoundBarcode(code);
+
+  // 2a. Check if any extracted token or batchCandidate matches barcodeMappings
+  for (const token of [parsed.batchCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
+    const tokenMap = mappings.find((m) => m.code.toLowerCase() === token.toLowerCase());
+    if (tokenMap) {
+      const med = medicines.find((m) => m.id === tokenMap.medicineId);
+      if (med) {
+        const batch = tokenMap.batchNumber
+          ? med.batches.find((b) => b.batchNumber === tokenMap.batchNumber) || med.batches[0]
+          : med.batches[0];
+        return { medicine: med, batch, unitType: tokenMap.unitType || 'STRIP' };
       }
     }
   }
 
-  // 3. Check medicine master barcode or id
-  const medByCode = medicines.find((m) => m.barcode === code || m.id === code);
-  if (medByCode) {
-    const availableBatches = medByCode.batches
-      .filter((b) => b.availableQuantity > 0)
-      .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
-    const selectedBatch = availableBatches[0] || medByCode.batches[0];
-    return { medicine: medByCode, batch: selectedBatch, unitType: 'STRIP' as const };
+  // 3. Batch candidate / token search in medicine batches
+  const batchCandidates = Array.from(
+    new Set(
+      [code, parsed.batchCandidate, ...parsed.tokens]
+        .filter(Boolean)
+        .map((s) => (s as string).toLowerCase().trim())
+    )
+  );
+
+  // 3a. Exact batch number or batch barcode match
+  for (const med of medicines) {
+    for (const b of med.batches) {
+      const bNo = b.batchNumber.toLowerCase().trim();
+      const bCode = (b.barcode || '').toLowerCase().trim();
+
+      for (const candidate of batchCandidates) {
+        if (bCode && (bCode === candidate || candidate.includes(bCode))) {
+          return { medicine: med, batch: b, unitType: 'STRIP' as const };
+        }
+        if (bNo === candidate) {
+          return { medicine: med, batch: b, unitType: 'STRIP' as const };
+        }
+      }
+    }
   }
 
-  // 4. GS1 DataMatrix matching (e.g. 0108901234567890...)
-  const gtinMatch = code.match(/01(\d{14})/);
-  if (gtinMatch) {
-    const gtin = gtinMatch[1];
+  // 3b. Smart Fuzzy/Partial Batch match (e.g. scanned "UG-7721" matching batch "AUG-7721", confirmed by EXP or MRP or suffix)
+  if (parsed.batchCandidate) {
+    const cleanCandidate = parsed.batchCandidate.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    for (const med of medicines) {
+      for (const b of med.batches) {
+        const cleanBatch = b.batchNumber.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        const isPartialMatch =
+          cleanBatch === cleanCandidate ||
+          cleanBatch.endsWith(cleanCandidate) ||
+          cleanCandidate.endsWith(cleanBatch) ||
+          b.batchNumber.toLowerCase().includes(parsed.batchCandidate.toLowerCase()) ||
+          parsed.batchCandidate.toLowerCase().includes(b.batchNumber.toLowerCase());
+
+        if (isPartialMatch) {
+          // Check if MRP or expiry confirms the match
+          const mrpMatches =
+            parsed.mrpCandidate !== undefined &&
+            (Math.abs(b.mrp - parsed.mrpCandidate) < 1.0 ||
+              Math.abs((b.saleRate || b.mrp) - parsed.mrpCandidate) < 1.0);
+
+          const expiryMatches =
+            parsed.expiryCandidate &&
+            (b.expiryDate.includes(parsed.expiryCandidate) ||
+              parsed.expiryCandidate.includes(b.expiryDate) ||
+              b.expiryDate.slice(0, 7) === parsed.expiryCandidate.slice(0, 7));
+
+          if (mrpMatches || expiryMatches || cleanCandidate.length >= 4) {
+            return { medicine: med, batch: b, unitType: 'STRIP' as const };
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Check medicine master barcode or id
+  for (const token of [code, parsed.gtinCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
+    const medByCode = medicines.find(
+      (m) =>
+        (m.barcode && m.barcode.toLowerCase() === token.toLowerCase()) ||
+        m.id.toLowerCase() === token.toLowerCase()
+    );
+    if (medByCode) {
+      let selectedBatch = medByCode.batches[0];
+      if (parsed.expiryCandidate) {
+        const matchByExp = medByCode.batches.find(
+          (b) =>
+            b.expiryDate.includes(parsed.expiryCandidate!) ||
+            parsed.expiryCandidate!.includes(b.expiryDate)
+        );
+        if (matchByExp) selectedBatch = matchByExp;
+      } else {
+        const availableBatches = medByCode.batches
+          .filter((b) => b.availableQuantity > 0)
+          .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
+        if (availableBatches[0]) selectedBatch = availableBatches[0];
+      }
+      return { medicine: medByCode, batch: selectedBatch, unitType: 'STRIP' as const };
+    }
+  }
+
+  // 5. GS1 DataMatrix matching (e.g. 0108901234001018...)
+  const gtin = parsed.gtinCandidate || (code.match(/01(\d{14})/) ? code.match(/01(\d{14})/)![1] : null);
+  if (gtin) {
     for (const med of medicines) {
       for (const b of med.batches) {
         if (b.barcode && gtin.endsWith(b.barcode)) {
@@ -184,6 +285,45 @@ function detectHardwareScannerWedge(
   const isHardwareScan = averageInterKey <= maxInterKeyDelayMs || totalDuration < 350;
 
   return { isHardwareScan, averageInterKey, totalDuration };
+}
+
+// Cart simulation helper mimicking POSBillingView addItemToCart & updateItemQuantity
+interface CartItem {
+  medicineId: string;
+  medicineName: string;
+  batchId: string;
+  batchNumber: string;
+  quantity: number;
+  rate: number;
+  mrp: number;
+  unitType: 'STRIP' | 'LOOSE';
+}
+
+function simulateScanAddToCart(cart: CartItem[], scannedCode: string): { cart: CartItem[]; action: 'ADDED' | 'INCREMENTED' } {
+  const match = findMedicineByBarcodeOrQR(scannedCode);
+  assert.ok(match, `Barcode "${scannedCode}" must resolve`);
+  const med = match.medicine;
+  const batch = match.batch!;
+  const unitType = match.unitType || 'STRIP';
+
+  const existingIdx = cart.findIndex((i) => i.medicineId === med.id && i.batchId === batch.id && i.unitType === unitType);
+  if (existingIdx >= 0) {
+    const updated = [...cart];
+    updated[existingIdx] = { ...updated[existingIdx], quantity: updated[existingIdx].quantity + 1 };
+    return { cart: updated, action: 'INCREMENTED' };
+  } else {
+    const newItem: CartItem = {
+      medicineId: med.id,
+      medicineName: med.name,
+      batchId: batch.id,
+      batchNumber: batch.batchNumber,
+      quantity: 1,
+      rate: batch.saleRate || batch.mrp,
+      mrp: batch.mrp,
+      unitType,
+    };
+    return { cart: [...cart, newItem], action: 'ADDED' };
+  }
 }
 
 async function runTests() {
@@ -234,7 +374,6 @@ async function runTests() {
   // Test 4: Dynamic Packaging Barcode Registration (User Request: scan and link without re-labeling)
   runTest('4. Dynamically link new physical manufacturer barcode to medicine', () => {
     const newBarcode = '8904001122334';
-    // Link new barcode to Dolo 650
     mockBarcodeMappings.push({
       id: 'map-new-002',
       code: newBarcode,
@@ -254,7 +393,6 @@ async function runTests() {
 
   // Test 5: GS1-128 / DataMatrix GTIN-14 parsing
   runTest('5. Parse GS1-128 GTIN-14 2D barcode payload', () => {
-    // 01 + 14 digit GTIN ending in 8901234567890
     const gs1Payload = '01089012345678901725123110DL24A';
     const result = findMedicineByBarcodeOrQR(gs1Payload);
     assert.ok(result, 'Expected GS1 payload to resolve');
@@ -269,7 +407,6 @@ async function runTests() {
 
   // Test 7: Hardware Wedge High-Speed Keystroke Detection (< 50ms)
   runTest('7. Detect rapid USB/Bluetooth scanner keystroke burst', () => {
-    // Physical scanner typing 13 characters in 180ms (~15ms per character)
     const scannerTimestamps = [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180];
     const detection = detectHardwareScannerWedge(scannerTimestamps, 60, 3);
     assert.strictEqual(detection.isHardwareScan, true, 'Scanner burst should be recognized as hardware wedge');
@@ -278,7 +415,6 @@ async function runTests() {
 
   // Test 8: Human Slow Keystroke Rejection (> 150ms)
   runTest('8. Distinguish human typing from hardware scanner gun', () => {
-    // Human cashier typing slowly (200ms per character)
     const humanTimestamps = [0, 220, 430, 680, 890, 1150];
     const detection = detectHardwareScannerWedge(humanTimestamps, 60, 3);
     assert.strictEqual(detection.isHardwareScan, false, 'Human typing must not trigger immediate wedge scan');
@@ -287,10 +423,54 @@ async function runTests() {
 
   // Test 9: Out of Stock Medicine Detection
   runTest('9. Check stock availability for scanned medicine', () => {
-    const result = findMedicineByBarcodeOrQR('8909876543210');
+    const result = findMedicineByBarcodeOrQR('AUG99');
     assert.ok(result, 'Expected medicine to be found');
     assert.strictEqual(result.medicine.name, 'Augmentin 625 Duo');
     assert.strictEqual(result.batch?.availableQuantity, 0, 'Available stock is 0 (Out of stock)');
+  });
+
+  // Test 10: USER SPECIFIC CASE: "UG-7721|EXP:2027-07-31|MRP:204.5"
+  runTest('10. Resolve Indian pharma 2D barcode: "UG-7721|EXP:2027-07-31|MRP:204.5"', () => {
+    const scannedCode = 'UG-7721|EXP:2027-07-31|MRP:204.5';
+    const result = findMedicineByBarcodeOrQR(scannedCode);
+    assert.ok(result, 'Expected compound barcode to resolve');
+    assert.strictEqual(result.medicine.name, 'Augmentin 625 Duo');
+    assert.strictEqual(result.batch?.batchNumber, 'AUG-7721');
+    assert.strictEqual(result.batch?.expiryDate, '2027-07-31');
+    assert.strictEqual(result.batch?.mrp, 204.5);
+    assert.strictEqual(result.batch?.availableQuantity, 80);
+  });
+
+  // Test 11: Auto-add to billing cart on scanning "UG-7721|EXP:2027-07-31|MRP:204.5"
+  runTest('11. Direct cart auto-add on scanning "UG-7721|EXP:2027-07-31|MRP:204.5"', () => {
+    let cart: CartItem[] = [];
+    const scannedCode = 'UG-7721|EXP:2027-07-31|MRP:204.5';
+
+    // 1st Scan: Item added to cart with qty 1
+    const res1 = simulateScanAddToCart(cart, scannedCode);
+    cart = res1.cart;
+    assert.strictEqual(res1.action, 'ADDED');
+    assert.strictEqual(cart.length, 1);
+    assert.strictEqual(cart[0].medicineName, 'Augmentin 625 Duo');
+    assert.strictEqual(cart[0].batchNumber, 'AUG-7721');
+    assert.strictEqual(cart[0].quantity, 1);
+    assert.strictEqual(cart[0].mrp, 204.5);
+
+    // 2nd Scan: Rescanning same item increments quantity to 2
+    const res2 = simulateScanAddToCart(cart, scannedCode);
+    cart = res2.cart;
+    assert.strictEqual(res2.action, 'INCREMENTED');
+    assert.strictEqual(cart.length, 1);
+    assert.strictEqual(cart[0].quantity, 2);
+  });
+
+  // Test 12: Variant compound format with semicolons and BATCH: prefix
+  runTest('12. Resolve variant compound barcode: "BATCH:DL24A;EXP:2025-12-31;MRP:34.0"', () => {
+    const scannedCode = 'BATCH:DL24A;EXP:2025-12-31;MRP:34.0';
+    const result = findMedicineByBarcodeOrQR(scannedCode);
+    assert.ok(result, 'Expected variant compound barcode to resolve');
+    assert.strictEqual(result.medicine.name, 'Dolo 650');
+    assert.strictEqual(result.batch?.batchNumber, 'DL24A');
   });
 
   console.log('\n========================================================================');

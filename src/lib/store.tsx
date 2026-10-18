@@ -49,6 +49,7 @@ import {
   INITIAL_BARCODE_MAPPINGS,
 } from '@/lib/initialData';
 import { calculateExpiryDate, getMembershipExpiryInfo } from '@/lib/membershipUtils';
+import { parseCompoundBarcode } from '@/lib/barcodeParser';
 
 interface PharmacyStoreContextType {
   medicines: Medicine[];
@@ -2200,8 +2201,8 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     if (!rawCode) return null;
     const code = rawCode.trim();
 
-    // 1. Check custom barcodeMappings (exact match)
-    const customMap = barcodeMappings.find((m) => m.code === code);
+    // 1. Check custom barcodeMappings (exact raw code match)
+    const customMap = barcodeMappings.find((m) => m.code.toLowerCase() === code.toLowerCase());
     if (customMap) {
       const med = medicines.find((m) => m.id === customMap.medicineId);
       if (med) {
@@ -2212,29 +2213,114 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // 2. Check medicine batches for direct barcode match
-    for (const med of medicines) {
-      for (const b of med.batches) {
-        if (b.barcode === code || b.batchNumber.toLowerCase() === code.toLowerCase()) {
-          return { medicine: med, batch: b, unitType: 'STRIP' as const };
+    // 2. Parse compound 2D QR / DataMatrix / Barcode payload (e.g. "UG-7721|EXP:2027-07-31|MRP:204.5")
+    const parsed = parseCompoundBarcode(code);
+
+    // 2a. Check if any extracted token or batchCandidate matches barcodeMappings
+    for (const token of [parsed.batchCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
+      const tokenMap = barcodeMappings.find((m) => m.code.toLowerCase() === token.toLowerCase());
+      if (tokenMap) {
+        const med = medicines.find((m) => m.id === tokenMap.medicineId);
+        if (med) {
+          const batch = tokenMap.batchNumber
+            ? med.batches.find((b) => b.batchNumber === tokenMap.batchNumber) || med.batches[0]
+            : med.batches[0];
+          return { medicine: med, batch, unitType: tokenMap.unitType || 'STRIP' };
         }
       }
     }
 
-    // 3. Check medicine master barcode or id
-    const medByCode = medicines.find((m) => m.barcode === code || m.id === code);
-    if (medByCode) {
-      const availableBatches = medByCode.batches
-        .filter((b) => b.availableQuantity > 0)
-        .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
-      const selectedBatch = availableBatches[0] || medByCode.batches[0];
-      return { medicine: medByCode, batch: selectedBatch, unitType: 'STRIP' as const };
+    // 3. Batch candidate / token search in medicine batches
+    const batchCandidates = Array.from(
+      new Set(
+        [code, parsed.batchCandidate, ...parsed.tokens]
+          .filter(Boolean)
+          .map((s) => (s as string).toLowerCase().trim())
+      )
+    );
+
+    // 3a. Exact batch number or batch barcode match
+    for (const med of medicines) {
+      for (const b of med.batches) {
+        const bNo = b.batchNumber.toLowerCase().trim();
+        const bCode = (b.barcode || '').toLowerCase().trim();
+
+        for (const candidate of batchCandidates) {
+          if (bCode && (bCode === candidate || candidate.includes(bCode))) {
+            return { medicine: med, batch: b, unitType: 'STRIP' as const };
+          }
+          if (bNo === candidate) {
+            return { medicine: med, batch: b, unitType: 'STRIP' as const };
+          }
+        }
+      }
     }
 
-    // 4. GS1 DataMatrix matching (e.g. 0108901234001018...)
-    const gtinMatch = code.match(/01(\d{14})/);
-    if (gtinMatch) {
-      const gtin = gtinMatch[1];
+    // 3b. Smart Fuzzy/Partial Batch match (e.g. scanned "UG-7721" matching batch "AUG-7721", confirmed by EXP or MRP or suffix)
+    if (parsed.batchCandidate) {
+      const cleanCandidate = parsed.batchCandidate.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      for (const med of medicines) {
+        for (const b of med.batches) {
+          const cleanBatch = b.batchNumber.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+          const isPartialMatch =
+            cleanBatch === cleanCandidate ||
+            cleanBatch.endsWith(cleanCandidate) ||
+            cleanCandidate.endsWith(cleanBatch) ||
+            b.batchNumber.toLowerCase().includes(parsed.batchCandidate.toLowerCase()) ||
+            parsed.batchCandidate.toLowerCase().includes(b.batchNumber.toLowerCase());
+
+          if (isPartialMatch) {
+            // Check if MRP or expiry confirms the match
+            const mrpMatches =
+              parsed.mrpCandidate !== undefined &&
+              (Math.abs(b.mrp - parsed.mrpCandidate) < 1.0 ||
+                Math.abs((b.saleRate || b.mrp) - parsed.mrpCandidate) < 1.0);
+
+            const expiryMatches =
+              parsed.expiryCandidate &&
+              (b.expiryDate.includes(parsed.expiryCandidate) ||
+                parsed.expiryCandidate.includes(b.expiryDate) ||
+                b.expiryDate.slice(0, 7) === parsed.expiryCandidate.slice(0, 7));
+
+            if (mrpMatches || expiryMatches || cleanCandidate.length >= 4) {
+              return { medicine: med, batch: b, unitType: 'STRIP' as const };
+            }
+          }
+        }
+      }
+    }
+
+    // 4. Check medicine master barcode or id
+    for (const token of [code, parsed.gtinCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
+      const medByCode = medicines.find(
+        (m) =>
+          (m.barcode && m.barcode.toLowerCase() === token.toLowerCase()) ||
+          m.id.toLowerCase() === token.toLowerCase()
+      );
+      if (medByCode) {
+        let selectedBatch = medByCode.batches[0];
+        if (parsed.expiryCandidate) {
+          const matchByExp = medByCode.batches.find(
+            (b) =>
+              b.expiryDate.includes(parsed.expiryCandidate!) ||
+              parsed.expiryCandidate!.includes(b.expiryDate)
+          );
+          if (matchByExp) selectedBatch = matchByExp;
+        } else {
+          const availableBatches = medByCode.batches
+            .filter((b) => b.availableQuantity > 0)
+            .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
+          if (availableBatches[0]) selectedBatch = availableBatches[0];
+        }
+        return { medicine: medByCode, batch: selectedBatch, unitType: 'STRIP' as const };
+      }
+    }
+
+    // 5. GS1 DataMatrix matching (e.g. 0108901234001018...)
+    const gtin = parsed.gtinCandidate || (code.match(/01(\d{14})/) ? code.match(/01(\d{14})/)![1] : null);
+    if (gtin) {
       for (const med of medicines) {
         for (const b of med.batches) {
           if (b.barcode && gtin.endsWith(b.barcode)) {
