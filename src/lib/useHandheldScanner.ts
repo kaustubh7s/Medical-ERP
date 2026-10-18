@@ -114,15 +114,16 @@ export function useHandheldScanner({
         const buffer = bufferRef.current.trim();
         const timestamps = keyTimestampsRef.current;
 
-        if (buffer.length >= minBarcodeLength && timestamps.length >= 2) {
-          const totalDuration = timestamps[timestamps.length - 1] - timestamps[0];
-          const averageInterKey = totalDuration / (timestamps.length - 1);
+        if (buffer.length >= minBarcodeLength) {
+          const totalDuration = timestamps.length >= 2 ? timestamps[timestamps.length - 1] - timestamps[0] : 0;
+          const averageInterKey = timestamps.length >= 2 ? totalDuration / (timestamps.length - 1) : 0;
 
-          // Support phone Bluetooth scanners (latency up to 150ms per key) or compound strings
-          const isHardwareScan = averageInterKey <= maxInterKeyDelayMs || totalDuration < 500;
+          // Support phone Bluetooth scanners (latency up to 180ms per key) or compound strings or numeric barcodes
+          const isHardwareScan = timestamps.length >= 2 && (averageInterKey <= Math.max(maxInterKeyDelayMs, 180) || totalDuration < 600);
           const isCompoundBarcode = buffer.includes('|') || buffer.includes('EXP:') || buffer.includes('MRP:');
+          const isNumericBarcode = /^\d{8,14}$/.test(buffer);
 
-          if (isHardwareScan || (!isInput && buffer.length >= 4) || isCompoundBarcode) {
+          if (isHardwareScan || (!isInput && buffer.length >= 4) || isCompoundBarcode || isNumericBarcode) {
             e.preventDefault();
             e.stopPropagation();
 
@@ -156,17 +157,23 @@ export function useHandheldScanner({
         bufferRef.current += e.key;
         keyTimestampsRef.current.push(now);
 
-        // Auto-clear or auto-trigger for phone apps without an Enter/Tab suffix
+        // Instant auto-trigger for phone apps without an Enter/Tab suffix (40ms for compound, 70ms for numeric)
         if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+        const currentBuf = bufferRef.current.trim();
+        const isCompound = currentBuf.includes('|') && (currentBuf.includes('EXP') || currentBuf.includes('MRP') || currentBuf.split('|').length >= 3);
+        const isNumeric = /^\d{8,14}$/.test(currentBuf);
+        const fastDelayMs = isCompound ? 40 : isNumeric ? 70 : 140;
+
         clearTimerRef.current = setTimeout(() => {
           const buf = bufferRef.current.trim();
-          // If the buffer has complete compound barcode signature (like "UG-7721|EXP:2027-07-31|MRP:204.5")
           if (buf.includes('|') && (buf.includes('EXP') || buf.includes('MRP') || buf.split('|').length >= 3)) {
-            triggerScan(buf, 'BLUETOOTH_PHONE', 300, 30);
+            triggerScan(buf, 'BLUETOOTH_PHONE', 40, 5);
+          } else if (/^\d{8,14}$/.test(buf) || (!isInput && buf.length >= 4)) {
+            triggerScan(buf, 'BLUETOOTH_PHONE', 70, 7);
           } else {
             resetBuffer();
           }
-        }, 500);
+        }, fastDelayMs);
       }
     };
 

@@ -239,6 +239,7 @@ export const POSBillingView: React.FC = () => {
   const lastProcessedTimeRef = useRef<number>(0);
   const lastProcessedItemKeyRef = useRef<string>('');
   const lastProcessedItemTimeRef = useRef<number>(0);
+  const fastScanTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
@@ -1778,6 +1779,26 @@ export const POSBillingView: React.FC = () => {
                 if (val.trim().length > 0) {
                   setIsDropdownOpen(true);
                 }
+
+                // Ultra-fast auto-scan for phone Bluetooth scanners typing into search input (30ms compound, 60ms numeric)
+                if (fastScanTimerRef.current) clearTimeout(fastScanTimerRef.current);
+                const cleanVal = val.trim();
+                const isCompound = cleanVal.includes('|') && (cleanVal.includes('EXP') || cleanVal.includes('MRP') || cleanVal.split('|').length >= 3);
+                const isStandardBarcode = /^\d{8,14}$/.test(cleanVal);
+
+                if (isCompound || isStandardBarcode) {
+                  fastScanTimerRef.current = setTimeout(() => {
+                    const match = findMedicineByBarcodeOrQR(cleanVal);
+                    if (match && match.medicine && match.batch) {
+                      if (searchInputRef.current) searchInputRef.current.value = '';
+                      setSearchTerm('');
+                      setIsDropdownOpen(false);
+                      setIsBatchModalOpen(false);
+                      setSelectedMed(null);
+                      handleBarcodeScanned(cleanVal);
+                    }
+                  }, isCompound ? 30 : 60);
+                }
               }}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
@@ -1795,6 +1816,7 @@ export const POSBillingView: React.FC = () => {
                     setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : filteredMedicines.length - 1));
                   }
                 } else if (e.key === 'Enter') {
+                  if (fastScanTimerRef.current) clearTimeout(fastScanTimerRef.current);
                   e.preventDefault();
                   e.stopPropagation();
                   const term = searchTerm.trim();
