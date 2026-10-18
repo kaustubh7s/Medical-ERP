@@ -6,11 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npx tsx tests/customer-membership-paid-billing.test.ts",
+    "test:terminal": "npx tsx tests/pos-terminal-integration.test.ts",
+    "test:membership": "npx tsx tests/customer-membership-paid-billing.test.ts",
+    "test:returns": "npx tsx tests/sales-return-cash-drawer.test.ts",
+    "test:scanner": "npx tsx tests/wireless-phone-qr-scanner.test.ts"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
+    "html5-qrcode": "^2.3.8",
     "jsbarcode": "^3.12.3",
     "lucide-react": "^1.37.0",
     "next": "16.3.3",

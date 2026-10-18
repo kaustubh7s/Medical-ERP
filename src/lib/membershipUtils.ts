@@ -24,27 +24,41 @@ export function formatINR(amount: number, showDecimals: boolean = true): string 
 }
 
 /**
- * Calculate the expiry date given a start date (YYYY-MM-DD) and duration in months
+ * Calculate the expiry date given a start date (YYYY-MM-DD) and duration in months.
+ * Strictly adheres to calendar-month arithmetic and handles month-end dates correctly
+ * (e.g. Jan 31 + 1 month = Feb 28 in non-leap years, Feb 29 in leap years, Mar 31 + 1 month = Apr 30).
  */
 export function calculateExpiryDate(startDateStr: string, durationMonths: number, customDays?: number): string {
   if (!startDateStr) {
     const today = new Date();
     startDateStr = today.toISOString().split('T')[0];
   }
-  const date = new Date(startDateStr);
+  const parts = startDateStr.split('-');
+  const startYear = parseInt(parts[0], 10);
+  const startMonth = parseInt(parts[1], 10); // 1-12
+  const startDay = parseInt(parts[2], 10);
 
   if (customDays && customDays > 0) {
-    date.setDate(date.getDate() + customDays);
-  } else {
-    // Add months
-    date.setMonth(date.getMonth() + durationMonths);
+    const date = new Date(Date.UTC(startYear, startMonth - 1, startDay));
+    date.setUTCDate(date.getUTCDate() + customDays);
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(date.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
 
-  // Format YYYY-MM-DD
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  // Calendar month arithmetic:
+  const totalMonths = (startMonth - 1) + durationMonths;
+  const targetYear = startYear + Math.floor(totalMonths / 12);
+  const targetMonthIndex = ((totalMonths % 12) + 12) % 12; // 0-11
+  
+  // Find max days in target month using UTC to avoid timezone shifts
+  const maxDaysInTargetMonth = new Date(Date.UTC(targetYear, targetMonthIndex + 1, 0)).getUTCDate();
+  const targetDay = Math.min(startDay, maxDaysInTargetMonth);
+
+  const formattedMonth = String(targetMonthIndex + 1).padStart(2, '0');
+  const formattedDay = String(targetDay).padStart(2, '0');
+  return `${targetYear}-${formattedMonth}-${formattedDay}`;
 }
 
 export interface MembershipExpiryInfo {
@@ -205,25 +219,27 @@ export function calculateCustomerPurchases(
   });
 
   matchedInvoices.forEach((inv) => {
-    // Exclude cancelled sales
+    // Only completed / paid transactions qualify for customer loyalty net purchases
+    if (inv.paymentStatus !== 'PAID') {
+      return;
+    }
+
     const invoiceDate = inv.invoiceDate.split(' ')[0];
     const isWithinRollingWindow = invoiceDate >= cutoffDateStr;
 
-    // Calculate eligible amount in this invoice
-    // Products not in excludedCategories and not in excludedScheduleTypes
-    const eligibleAmount = inv.items.reduce((sum, item) => {
-      // If categories are excluded, we verify
-      return sum + (item.totalAmount || 0);
-    }, 0);
+    // Do not count the membership fee itself as a medicine purchase for qualifying customer discounts
+    const membershipFeeTotal = inv.items
+      .filter((item) => item.itemCategory === 'MEMBERSHIP' || item.medicineId === 'SERVICE_MEMBERSHIP')
+      .reduce((sum, item) => sum + (item.totalAmount || item.rate * item.quantity), 0);
 
-    // Subtract return amount if any on this invoice
-    const netInvoiceAmount = Math.max(0, inv.grandTotal - (inv.returnAmount || 0));
+    // Subtract return amount and membership fee to obtain pure medicine net purchases
+    const netMedicineAmount = Math.max(0, inv.grandTotal - (inv.returnAmount || 0) - membershipFeeTotal);
 
-    totalLifetimePurchases += netInvoiceAmount;
+    totalLifetimePurchases += netMedicineAmount;
     totalSavings += (inv.membershipDiscountAmount || 0) + (inv.totalDiscount || 0);
 
     if (isWithinRollingWindow) {
-      rollingPurchases += netInvoiceAmount;
+      rollingPurchases += netMedicineAmount;
     }
   });
 

@@ -2,7 +2,17 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { usePharmacy } from '@/lib/store';
-import { Medicine, Batch, InvoiceItem, Customer, HeldBills, PaymentMode } from '@/types/pharmacy';
+import {
+  Medicine,
+  Batch,
+  InvoiceItem,
+  Customer,
+  HeldBills,
+  PaymentMode,
+  PosTerminalHealthResponse,
+  TerminalPaymentAttempt,
+  TerminalPaymentState,
+} from '@/types/pharmacy';
 import { PrintInvoiceModal } from '@/components/common/PrintInvoiceModal';
 import { Modal } from '@/components/common/Modal';
 import { parseUnitsPerPack, getPerUnitRate, formatStockDisplay } from '@/lib/units';
@@ -46,6 +56,15 @@ import {
   Info,
   Crown,
   PlusCircle,
+  SmartphoneNfc,
+  Smartphone,
+  Barcode,
+  Terminal,
+  RefreshCw,
+  Loader2,
+  Wifi,
+  WifiOff,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   getMembershipExpiryInfo,
@@ -54,6 +73,8 @@ import {
   calculateExpiryDate,
   formatINR,
 } from '@/lib/membershipUtils';
+import { CompactMembershipRegistrationForm } from '@/components/modules/membership/CompactMembershipRegistrationForm';
+
 
 interface RepeatOrderItem {
   medicineId: string;
@@ -92,7 +113,27 @@ export const POSBillingView: React.FC = () => {
     addCustomer,
     getMemberByPhone,
     createMembership,
+    pendingMembershipCartItem,
+    setPendingMembershipCartItem,
+    cancelPendingMembership,
+    setActiveTab,
+    phoneScannerStatus,
+    phoneScannerSession,
+    setIsPhoneScannerModalOpen,
+    lastScannedItem,
+    pendingScannedBarcode,
+    setPendingScannedBarcode,
+    assignBarcodeToMedicine,
   } = usePharmacy();
+
+  // Quick Barcode Linking State
+  const [isBarcodeLinkModalOpen, setIsBarcodeLinkModalOpen] = useState(false);
+  const [barcodeToLink, setBarcodeToLink] = useState('');
+  const [linkSearch, setLinkSearch] = useState('');
+  const [linkSelectedMedicineId, setLinkSelectedMedicineId] = useState('');
+  const [linkUnitType, setLinkUnitType] = useState<'STRIP' | 'LOOSE'>('STRIP');
+  const [linkNotes, setLinkNotes] = useState('');
+  const [linkErrorMessage, setLinkErrorMessage] = useState<string | null>(null);
 
   // Search & Input state
   const [searchTerm, setSearchTerm] = useState('');
@@ -120,6 +161,34 @@ export const POSBillingView: React.FC = () => {
   const [newCustDoctor, setNewCustDoctor] = useState('Self / Direct');
   const [newCustCreditLimit, setNewCustCreditLimit] = useState(5000);
 
+  // Ingest pending membership line item when added from Membership module
+  useEffect(() => {
+    if (pendingMembershipCartItem) {
+      setCart((prevCart) => {
+        const withoutOldMembership = prevCart.filter(
+          (item) => item.itemCategory !== 'MEMBERSHIP'
+        );
+        return [...withoutOldMembership, pendingMembershipCartItem];
+      });
+
+      if (pendingMembershipCartItem.membershipDetails?.customerPhone) {
+        const cleanPhone = pendingMembershipCartItem.membershipDetails.customerPhone;
+        const matchingCust = customers.find(
+          (c) => c.phone.replace(/\D/g, '') === cleanPhone.replace(/\D/g, '')
+        );
+        if (matchingCust) {
+          setSelectedCustomer(matchingCust);
+        } else {
+          setWalkinName(pendingMembershipCartItem.membershipDetails.customerName);
+          setWalkinPhone(cleanPhone);
+        }
+      }
+
+      setPendingMembershipCartItem(null);
+    }
+  }, [pendingMembershipCartItem, customers, setPendingMembershipCartItem]);
+
+
   // Quick In-POS Member Enrollment Modal State
   const [isQuickEnrollOpen, setIsQuickEnrollOpen] = useState(false);
   const [quickEnrollDuration, setQuickEnrollDuration] = useState<number>(12);
@@ -137,11 +206,23 @@ export const POSBillingView: React.FC = () => {
 
   // Payment Modal
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [paymentMode, setPaymentMode] = useState<'CASH' | 'UPI' | 'CARD' | 'CREDIT' | 'SPLIT'>('CASH');
+  const [paymentMode, setPaymentMode] = useState<'CASH' | 'UPI' | 'CARD' | 'CREDIT' | 'SPLIT' | 'POS_TERMINAL'>('CASH');
   const [cashTendered, setCashTendered] = useState<string>('');
   const [creditDownPayment, setCreditDownPayment] = useState<string>('0'); // Patient pays partial cash, rest on credit
   const [splitCashAmount, setSplitCashAmount] = useState<string>(''); // For SPLIT mode cash portion
   const [splitCashTendered, setSplitCashTendered] = useState<string>(''); // Cash note given for split portion
+
+  // POS Terminal Integration State
+  const [terminalHealth, setTerminalHealth] = useState<PosTerminalHealthResponse | null>(null);
+  const [isCheckingTerminalHealth, setIsCheckingTerminalHealth] = useState(false);
+  const [terminalPaymentState, setTerminalPaymentState] = useState<TerminalPaymentState>('IDLE');
+  const [activePaymentAttempt, setActivePaymentAttempt] = useState<TerminalPaymentAttempt | null>(null);
+  const [terminalErrorMsg, setTerminalErrorMsg] = useState<string | null>(null);
+  const [isTerminalActionLoading, setIsTerminalActionLoading] = useState(false);
+  const [terminalRecentAttempts, setTerminalRecentAttempts] = useState<TerminalPaymentAttempt[]>([]);
+  const terminalPollRef = useRef<NodeJS.Timeout | null>(null);
+  const terminalEventSourceRef = useRef<EventSource | null>(null);
+  const isFinalizingInvoiceRef = useRef<boolean>(false);
 
   // Held Bills Modal
   const [isHeldModalOpen, setIsHeldModalOpen] = useState(false);
@@ -453,12 +534,62 @@ export const POSBillingView: React.FC = () => {
     return () => window.removeEventListener('keydown', handleRepeatKeyDown);
   }, [repeatOrderModalOpen, repeatItems, repeatHighlightedIndex]);
 
+  // Auto-focus customer search input when customer directory modal opens
+  useEffect(() => {
+    if (isCustomerModalOpen) {
+      const timer = setTimeout(() => {
+        customerSearchInputRef.current?.focus();
+        customerSearchInputRef.current?.select();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isCustomerModalOpen]);
+
   // Focus search input on mount & global POS keyboard shortcuts
   useEffect(() => {
     searchInputRef.current?.focus();
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Avoid intercepting if user is inside any modal
+      const isShift = e.shiftKey;
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+      const activeEl = document.activeElement;
+      // Other text fields where user might legitimately type capital 'A' or 'C'
+      const isOtherTextEntry =
+        activeEl &&
+        activeEl !== searchInputRef.current &&
+        (activeEl.tagName === 'TEXTAREA' ||
+          (activeEl.tagName === 'INPUT' &&
+            !['button', 'submit', 'checkbox', 'radio', 'number'].includes(
+              (activeEl as HTMLInputElement).type?.toLowerCase()
+            )));
+
+      // 1. Shift+C / Ctrl+C = Search for customer (open Patient Directory / Khata Modal)
+      if ((isShift && (e.key === 'C' || e.key === 'c') && !isOtherTextEntry) || (isCtrlOrCmd && (e.key === 'c' || e.key === 'C'))) {
+        const hasSelection = !!window.getSelection()?.toString();
+        if (!hasSelection) {
+          e.preventDefault();
+          if (isPaymentModalOpen) return;
+          setRepeatSearchTerm('');
+          setIsCustomerModalOpen(true);
+          return;
+        }
+      }
+
+      // 2. Shift+A / Ctrl+A = Add medicine option (focus medicine search/scan input and open dropdown)
+      if ((isShift && (e.key === 'A' || e.key === 'a') && !isOtherTextEntry) || (isCtrlOrCmd && (e.key === 'a' || e.key === 'A'))) {
+        e.preventDefault();
+        if (isPaymentModalOpen) return;
+        setIsCustomerModalOpen(false);
+        setIsHeldModalOpen(false);
+        setIsBatchModalOpen(false);
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        setIsDropdownOpen(true);
+        return;
+      }
+
+      // Avoid intercepting remaining function keys if user is inside any modal
       if (isBatchModalOpen || isHeldModalOpen || isCustomerModalOpen || isPaymentModalOpen || repeatOrderModalOpen) return;
 
       if (e.key === 'F2') {
@@ -653,6 +784,78 @@ export const POSBillingView: React.FC = () => {
     }
   };
 
+  // Wireless Phone QR Scan Feedback Banner State
+  const [scanFeedback, setScanFeedback] = useState<{
+    type: 'SUCCESS' | 'WARNING' | 'UNKNOWN';
+    message: string;
+    code: string;
+    time: number;
+    medicineName?: string;
+  } | null>(null);
+
+  // Auto-dismiss scan feedback after 8 seconds
+  useEffect(() => {
+    if (!scanFeedback) return;
+    const timer = setTimeout(() => {
+      setScanFeedback(null);
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [scanFeedback]);
+
+  // Listen for real-time scans delivered from wireless paired phone
+  useEffect(() => {
+    const handlePhoneScan = (e: Event) => {
+      const customEvent = e as CustomEvent<{
+        code: string;
+        match: { medicine: Medicine; batch?: Batch; unitType?: 'STRIP' | 'LOOSE' } | null;
+      }>;
+      const { code, match } = customEvent.detail;
+
+      if (match) {
+        // Find best batch following FEFO rules or available quantity
+        const batchToUse =
+          match.batch ||
+          match.medicine.batches.find((b) => b.availableQuantity > 0) ||
+          match.medicine.batches[0];
+
+        if (batchToUse && batchToUse.availableQuantity > 0) {
+          addItemToCart(match.medicine, batchToUse, 1, match.unitType || 'STRIP');
+          setScanFeedback({
+            type: 'SUCCESS',
+            message: `Scanned & Added: ${match.medicine.name} (Batch: ${batchToUse.batchNumber})`,
+            code,
+            time: Date.now(),
+            medicineName: match.medicine.name,
+          });
+        } else {
+          setScanFeedback({
+            type: 'WARNING',
+            message: `Medicine "${match.medicine.name}" identified, but all batches are out of stock!`,
+            code,
+            time: Date.now(),
+            medicineName: match.medicine.name,
+          });
+        }
+      } else {
+        setScanFeedback({
+          type: 'UNKNOWN',
+          message: `Packaging barcode "${code}" not recognized yet. Select medicine to link!`,
+          code,
+          time: Date.now(),
+        });
+        setBarcodeToLink(code);
+        setLinkSearch('');
+        setLinkSelectedMedicineId('');
+        setLinkUnitType('STRIP');
+        setLinkErrorMessage(null);
+        setIsBarcodeLinkModalOpen(true);
+      }
+    };
+
+    window.addEventListener('pharmacy:phone_scan', handlePhoneScan);
+    return () => window.removeEventListener('pharmacy:phone_scan', handlePhoneScan);
+  }, [addItemToCart]);
+
   // Switch between Full Strip and Cut-Strip / Loose Tablet Mode for a line item
   const toggleItemUnitType = (index: number, forceUnitType?: 'STRIP' | 'LOOSE') => {
     setCart((prev) =>
@@ -769,6 +972,10 @@ export const POSBillingView: React.FC = () => {
   };
 
   const removeItemFromCart = (index: number) => {
+    const item = cart[index];
+    if (item?.membershipDetails?.registrationId) {
+      cancelPendingMembership(item.membershipDetails.registrationId);
+    }
     setCart((prev) => prev.filter((_, idx) => idx !== index));
   };
 
@@ -786,6 +993,11 @@ export const POSBillingView: React.FC = () => {
 
   const handleClearCart = () => {
     if (cart.length > 0 && !confirm('Clear active billing cart?')) return;
+    cart.forEach((item) => {
+      if (item.membershipDetails?.registrationId) {
+        cancelPendingMembership(item.membershipDetails.registrationId);
+      }
+    });
     setCart([]);
     setSelectedCustomer(null);
     setWalkinName('Walk-in Cash Customer');
@@ -1011,6 +1223,390 @@ export const POSBillingView: React.FC = () => {
     setIsQuickEnrollOpen(false);
   };
 
+  // Check health and readiness of external Pine Labs terminal simulator
+  const checkTerminalHealthStatus = async () => {
+    setIsCheckingTerminalHealth(true);
+    try {
+      const res = await fetch('/api/terminal/health', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        setTerminalHealth(data);
+      } else {
+        setTerminalHealth({
+          status: 'DISCONNECTED',
+          simulator: 'Pine Labs-Style POS Terminal Simulator',
+          deviceId: settings.posTerminalDeviceId || 'PINELABS-POS-M884',
+          merchantName: settings.posTerminalMerchantName || 'CarePlus Pharmacy & Wellness',
+          environment: 'DEMO',
+          terminalStatus: 'OFFLINE',
+          isPaired: false,
+        });
+      }
+    } catch {
+      setTerminalHealth({
+        status: 'DISCONNECTED',
+        simulator: 'Pine Labs-Style POS Terminal Simulator',
+        deviceId: settings.posTerminalDeviceId || 'PINELABS-POS-M884',
+        merchantName: settings.posTerminalMerchantName || 'CarePlus Pharmacy & Wellness',
+        environment: 'DEMO',
+        terminalStatus: 'OFFLINE',
+        isPaired: false,
+      });
+    } finally {
+      setIsCheckingTerminalHealth(false);
+    }
+  };
+
+  // Cleanup active listeners on unmount or reset
+  const cleanupTerminalListeners = () => {
+    if (terminalPollRef.current) {
+      clearInterval(terminalPollRef.current);
+      terminalPollRef.current = null;
+    }
+    if (terminalEventSourceRef.current) {
+      terminalEventSourceRef.current.close();
+      terminalEventSourceRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      cleanupTerminalListeners();
+    };
+  }, []);
+
+  // Fetch terminal health when payment modal opens and POS_TERMINAL is selected
+  useEffect(() => {
+    if (isPaymentModalOpen && paymentMode === 'POS_TERMINAL') {
+      checkTerminalHealthStatus();
+    }
+  }, [isPaymentModalOpen, paymentMode]);
+
+  // Load persisted terminal attempts from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('CAREPLUS_TERMINAL_PAYMENT_ATTEMPTS_V1');
+      if (saved) {
+        setTerminalRecentAttempts(JSON.parse(saved));
+      }
+    } catch {}
+  }, []);
+
+  const saveTerminalAttempt = (attempt: TerminalPaymentAttempt) => {
+    setActivePaymentAttempt(attempt);
+    setTerminalRecentAttempts((prev) => {
+      const filtered = prev.filter((a) => a.requestId !== attempt.requestId);
+      const updated = [attempt, ...filtered].slice(0, 50);
+      try {
+        localStorage.setItem('CAREPLUS_TERMINAL_PAYMENT_ATTEMPTS_V1', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
+
+  // Authoritative Server-to-Server Verification and Invoice Finalization
+  const verifyAndFinalizeTerminalPayment = async (
+    transactionId: string,
+    requestId: string,
+    expectedInvoiceNumber: string,
+    expectedAmount: number
+  ) => {
+    if (isFinalizingInvoiceRef.current) return;
+    isFinalizingInvoiceRef.current = true;
+    cleanupTerminalListeners();
+
+    try {
+      const verifyRes = await fetch('/api/terminal/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transactionId,
+          requestId,
+          expectedAmount: Number(expectedAmount.toFixed(2)),
+          expectedInvoiceReference: expectedInvoiceNumber,
+        }),
+      });
+
+      const verifyData = await verifyRes.json();
+
+      if (!verifyData.verified) {
+        setTerminalPaymentState('RECONCILIATION_REQUIRED');
+        setTerminalErrorMsg(
+          verifyData.reason || 'Authoritative payment verification failed. Terminal returned mismatched data.'
+        );
+        isFinalizingInvoiceRef.current = false;
+        return;
+      }
+
+      // Verified successfully! Finalize invoice and deduct batch stock strictly once
+      const txn = verifyData.transaction || {};
+      const custName = selectedCustomer ? selectedCustomer.name : walkinName;
+      const custPhone = selectedCustomer ? selectedCustomer.phone : walkinPhone;
+      const custId = selectedCustomer ? selectedCustomer.id : `cust-walkin-${Date.now()}`;
+
+      const finalizedInvoice = createSalesInvoice({
+        invoiceType: 'RETAIL',
+        customerId: custId,
+        customerName: custName,
+        customerPhone: custPhone,
+        doctorName,
+        items: cart,
+        subTotal: grossTotal,
+        totalDiscount: lineDiscounts + billDiscountAmount + membershipDiscountAmount,
+        totalCgst,
+        totalSgst,
+        totalIgst: 0,
+        roundOff,
+        grandTotal,
+        paymentMode: 'POS_TERMINAL',
+        paymentStatus: 'PAID',
+        amountPaid: grandTotal,
+        balanceDue: 0,
+        cashierName: currentUser.name,
+        membershipId: currentMember ? currentMember.membershipId : undefined,
+        membershipDiscountPercent: effectiveMemberDiscountPercent,
+        membershipDiscountAmount,
+        membershipTier: currentMember ? (memberTierInfo.tier as '10%' | '20%') : undefined,
+        eligiblePurchaseAmount: customerPurchaseAgg.rollingPurchases,
+        terminalDeviceId: settings.posTerminalDeviceId || 'PINELABS-POS-M884',
+        terminalTransactionId: txn.transactionId || transactionId,
+        terminalRequestId: requestId,
+        terminalAuthCode: txn.authCode,
+        terminalRrn: txn.rrn,
+        terminalPaymentMethod: txn.paymentMethod || 'CUSTOMER_CHOICE',
+        terminalCardLast4: txn.cardLast4,
+        terminalCardNetwork: txn.cardNetwork,
+        terminalUpiVpa: txn.upiVpa,
+        terminalStatus: 'SUCCESS',
+        isDemoTerminal: true,
+      });
+
+      // Update persisted attempt to finalized
+      saveTerminalAttempt({
+        id: `att-${Date.now()}`,
+        invoiceNumber: finalizedInvoice.invoiceNumber,
+        requestId,
+        transactionId: txn.transactionId || transactionId,
+        deviceId: settings.posTerminalDeviceId || 'PINELABS-POS-M884',
+        amount: grandTotal,
+        currency: 'INR',
+        state: 'SUCCESS',
+        paymentMethod: txn.paymentMethod,
+        authCode: txn.authCode,
+        rrn: txn.rrn,
+        cardLast4: txn.cardLast4,
+        cardNetwork: txn.cardNetwork,
+        cardEntryMode: txn.cardEntryMode,
+        upiVpa: txn.upiVpa,
+        isDemo: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        finalized: true,
+      });
+
+      setTerminalPaymentState('SUCCESS');
+      setCompletedInvoice(finalizedInvoice);
+      setIsPaymentModalOpen(false);
+      setIsPrintModalOpen(true);
+      setCart([]);
+      setSelectedCustomer(null);
+      setWalkinName('Walk-in Cash Customer');
+      setWalkinPhone('');
+      setDoctorName('Self');
+      setTerminalPaymentState('IDLE');
+      setActivePaymentAttempt(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to finalize transaction';
+      setTerminalPaymentState('RECONCILIATION_REQUIRED');
+      setTerminalErrorMsg(`Invoice finalization error: ${msg}`);
+    } finally {
+      isFinalizingInvoiceRef.current = false;
+    }
+  };
+
+  // Start polling fallback and SSE stream
+  const startTerminalMonitoring = (
+    transactionId: string,
+    requestId: string,
+    invoiceRef: string,
+    amount: number
+  ) => {
+    cleanupTerminalListeners();
+
+    let attemptsCount = 0;
+    const maxPollAttempts = 80; // ~120 seconds
+
+    // 1. Polling fallback every 1500ms
+    terminalPollRef.current = setInterval(async () => {
+      attemptsCount++;
+      if (attemptsCount > maxPollAttempts) {
+        cleanupTerminalListeners();
+        setTerminalPaymentState('TIMED_OUT');
+        setTerminalErrorMsg('POS Terminal payment timed out after 120 seconds. Please check terminal screen.');
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/terminal/status?identifier=${encodeURIComponent(transactionId || requestId)}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (!data.success && !data.status) return;
+
+        if (data.status === 'PROCESSING') {
+          setTerminalPaymentState('PROCESSING');
+        } else if (data.status === 'SUCCESS') {
+          verifyAndFinalizeTerminalPayment(data.transactionId || transactionId, requestId, invoiceRef, amount);
+        } else if (data.status === 'FAILED') {
+          cleanupTerminalListeners();
+          setTerminalPaymentState('FAILED');
+          setTerminalErrorMsg(data.failureReason || 'Payment was declined or cancelled on POS terminal.');
+        } else if (data.status === 'CANCELLED') {
+          cleanupTerminalListeners();
+          setTerminalPaymentState('CANCELLED');
+          setTerminalErrorMsg('Payment was cancelled on terminal.');
+        }
+      } catch {
+        // Continue polling until timeout
+      }
+    }, 1500);
+
+    // 2. SSE Listener for immediate push updates
+    try {
+      const es = new EventSource('/api/terminal/events');
+      terminalEventSourceRef.current = es;
+
+      es.onmessage = (event) => {
+        try {
+          const evt = JSON.parse(event.data);
+          if (
+            evt.transactionId === transactionId ||
+            evt.requestId === requestId ||
+            evt.invoiceReference === invoiceRef
+          ) {
+            if (evt.status === 'PROCESSING') {
+              setTerminalPaymentState('PROCESSING');
+            } else if (evt.status === 'SUCCESS') {
+              verifyAndFinalizeTerminalPayment(evt.transactionId || transactionId, requestId, invoiceRef, amount);
+            } else if (evt.status === 'FAILED') {
+              cleanupTerminalListeners();
+              setTerminalPaymentState('FAILED');
+              setTerminalErrorMsg(evt.failureReason || 'Payment declined on POS terminal.');
+            } else if (evt.status === 'CANCELLED') {
+              cleanupTerminalListeners();
+              setTerminalPaymentState('CANCELLED');
+              setTerminalErrorMsg('Payment cancelled.');
+            }
+          }
+        } catch {}
+      };
+
+      es.onerror = () => {
+        // SSE error, gracefully rely on polling fallback
+        es.close();
+      };
+    } catch {}
+  };
+
+  // Send Payment to Terminal
+  const handleCollectPaymentOnTerminal = async () => {
+    if (cart.length === 0 || grandTotal <= 0) return;
+    if (isTerminalActionLoading || ['REQUESTED', 'PROCESSING'].includes(terminalPaymentState)) return;
+
+    setIsTerminalActionLoading(true);
+    setTerminalErrorMsg(null);
+
+    const invCount = invoices.length + 1;
+    const invNumber = `INV-${new Date().getFullYear()}-${String(invCount).padStart(5, '0')}`;
+    const requestId = `req-inv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    setTerminalPaymentState('REQUESTED');
+
+    const newAttempt: TerminalPaymentAttempt = {
+      id: `att-${Date.now()}`,
+      invoiceNumber: invNumber,
+      requestId,
+      deviceId: settings.posTerminalDeviceId || 'PINELABS-POS-M884',
+      amount: grandTotal,
+      currency: 'INR',
+      state: 'REQUESTED',
+      isDemo: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      finalized: false,
+    };
+    saveTerminalAttempt(newAttempt);
+
+    try {
+      const res = await fetch('/api/terminal/payment-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId,
+          amount: Number(grandTotal.toFixed(2)),
+          currency: 'INR',
+          invoiceReference: invNumber,
+          paymentMethod: 'CUSTOMER_CHOICE',
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setTerminalPaymentState('FAILED');
+        setTerminalErrorMsg(data.error || 'Failed to dispatch payment to POS terminal. Please ensure simulator is running.');
+        setIsTerminalActionLoading(false);
+        return;
+      }
+
+      setTerminalPaymentState('PROCESSING');
+      saveTerminalAttempt({
+        ...newAttempt,
+        transactionId: data.transactionId,
+        state: 'PROCESSING',
+        updatedAt: new Date().toISOString(),
+      });
+
+      // Start listening and polling for terminal status
+      startTerminalMonitoring(data.transactionId, requestId, invNumber, grandTotal);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Terminal communication failure';
+      setTerminalPaymentState('FAILED');
+      setTerminalErrorMsg(`Error: ${msg}`);
+    } finally {
+      setIsTerminalActionLoading(false);
+    }
+  };
+
+  // Cancel Payment Request
+  const handleCancelTerminalPayment = async () => {
+    if (!activePaymentAttempt) return;
+    setIsTerminalActionLoading(true);
+
+    try {
+      const res = await fetch('/api/terminal/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          identifier: activePaymentAttempt.transactionId || activePaymentAttempt.requestId,
+        }),
+      });
+
+      const data = await res.json();
+      cleanupTerminalListeners();
+      setTerminalPaymentState('CANCELLED');
+      setTerminalErrorMsg(data.message || 'Payment cancelled by cashier.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to cancel payment';
+      setTerminalErrorMsg(`Cancel error: ${msg}`);
+    } finally {
+      setIsTerminalActionLoading(false);
+    }
+  };
+
   // Complete & Save Bill (Supports Cash, UPI, Card, or Khata Credit with partial split)
   const handleCompleteSale = () => {
     if (cart.length === 0) return;
@@ -1131,11 +1727,12 @@ export const POSBillingView: React.FC = () => {
                   setIsDropdownOpen(false);
                 }
               }}
-              placeholder="F2: Scan Barcode or type medicine brand name, salt (e.g. Dolo, Paracetamol)..."
-              className="w-full pl-9 pr-16 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner"
+              placeholder="Shift+A / F2: Scan Barcode or type medicine brand name, salt (e.g. Dolo, Paracetamol)..."
+              className="w-full pl-9 pr-24 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner"
             />
-            <div className="absolute right-2.5 top-1.5 flex items-center gap-1.5">
-              <kbd className="kbd-shortcut">F2</kbd>
+            <div className="absolute right-2 top-1.5 flex items-center gap-1">
+              <kbd className="kbd-shortcut text-[10px]">Shift+A</kbd>
+              <kbd className="kbd-shortcut text-[10px]">F2</kbd>
             </div>
           </div>
 
@@ -1451,10 +2048,15 @@ export const POSBillingView: React.FC = () => {
               className="bg-transparent text-xs font-semibold w-36 outline-none text-slate-800 dark:text-slate-200"
             />
             <button
-              onClick={() => setIsCustomerModalOpen(true)}
-              className="text-[10px] font-bold text-emerald-700 hover:underline"
+              onClick={() => {
+                setRepeatSearchTerm('');
+                setIsCustomerModalOpen(true);
+              }}
+              title="Shift+C: Search customer directory & khata"
+              className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-1"
             >
-              Search/Add
+              <span>Search/Add</span>
+              <kbd className="kbd-shortcut text-[9px] px-1 py-0 font-mono">Shift+C</kbd>
             </button>
           </div>
 
@@ -1501,8 +2103,113 @@ export const POSBillingView: React.FC = () => {
             <PlayCircle className="h-3.5 w-3.5 text-blue-600" />
             <span>F6 ({heldBills.length})</span>
           </button>
+
+          {/* Quick Barcode Linking Trigger Button */}
+          <button
+            onClick={() => {
+              setBarcodeToLink(pendingScannedBarcode || '');
+              setLinkSearch('');
+              setLinkSelectedMedicineId('');
+              setLinkUnitType('STRIP');
+              setLinkErrorMessage(null);
+              setIsBarcodeLinkModalOpen(true);
+            }}
+            title="Scan packaging barcode on medicine box and rename/link it to your medicine"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors"
+          >
+            <Barcode className="h-3.5 w-3.5" />
+            <span>Link Barcode</span>
+          </button>
+
+          {/* Phone QR Scanner Trigger Button */}
+          <button
+            onClick={() => setIsPhoneScannerModalOpen(true)}
+            title="Connect wireless phone camera as QR / Barcode scanner"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-bold transition-all active:scale-95 ${
+              phoneScannerStatus === 'CONNECTED'
+                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 shadow-xs'
+                : phoneScannerStatus === 'WAITING'
+                ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20 animate-pulse'
+                : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            <Smartphone className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span>Phone Scanner</span>
+            <span
+              className={`h-2 w-2 rounded-full ${
+                phoneScannerStatus === 'CONNECTED'
+                  ? 'bg-emerald-500'
+                  : phoneScannerStatus === 'WAITING'
+                  ? 'bg-amber-500 animate-ping'
+                  : 'bg-slate-400'
+              }`}
+            />
+          </button>
         </div>
       </div>
+
+      {/* Live Wireless Phone Scanner Status / Alert Banner in POS */}
+      {scanFeedback && (
+        <div
+          className={`p-2.5 rounded-lg border flex items-center justify-between gap-3 text-xs shadow-xs animate-in fade-in slide-in-from-top-1 ${
+            scanFeedback.type === 'SUCCESS'
+              ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+              : scanFeedback.type === 'WARNING'
+              ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+              : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {scanFeedback.type === 'SUCCESS' ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            ) : (
+              <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0" />
+            )}
+            <div>
+              <span className="font-bold">{scanFeedback.message}</span>
+              <span className="font-mono text-[11px] ml-2 opacity-80">
+                (Scanned: <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded">{scanFeedback.code}</code>)
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {scanFeedback.type === 'UNKNOWN' && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    setBarcodeToLink(scanFeedback.code);
+                    setLinkSearch('');
+                    setLinkSelectedMedicineId('');
+                    setLinkUnitType('STRIP');
+                    setLinkErrorMessage(null);
+                    setIsBarcodeLinkModalOpen(true);
+                  }}
+                  className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] flex items-center gap-1 shadow-xs transition-colors"
+                >
+                  <Barcode className="h-3 w-3" />
+                  <span>⚡ Link to Medicine Now</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setPendingScannedBarcode(scanFeedback.code);
+                    setActiveTab('medicines');
+                  }}
+                  className="px-2 py-1 rounded bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 text-slate-700 dark:text-slate-300 font-bold text-[11px] transition-colors"
+                >
+                  <span>Medicine Master →</span>
+                </button>
+              </div>
+            )}
+            <button
+              onClick={() => setScanFeedback(null)}
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Customer Khata & Repeat Order Ribbon (When customer is selected) */}
       {selectedCustomer && (
@@ -1651,8 +2358,14 @@ export const POSBillingView: React.FC = () => {
                   <td colSpan={12} className="text-center py-16 text-slate-400">
                     <ShoppingCart className="h-8 w-8 mx-auto mb-2 opacity-30" />
                     <p className="font-bold text-xs">Counter Billing Cart is Empty</p>
-                    <p className="text-[11px]">
-                      Press <kbd className="kbd-shortcut">F2</kbd> to search/scan, or click <strong>Repeat Last Order</strong> above to copy a customer's prior prescription.
+                    <p className="text-[11px] flex items-center justify-center gap-1.5 flex-wrap">
+                      <span>Press</span>
+                      <kbd className="kbd-shortcut">Shift+A</kbd>
+                      <span>or</span>
+                      <kbd className="kbd-shortcut">F2</kbd>
+                      <span>to add medicine, or</span>
+                      <kbd className="kbd-shortcut">Shift+C</kbd>
+                      <span>to search customer.</span>
                     </p>
                   </td>
                 </tr>
@@ -1660,6 +2373,78 @@ export const POSBillingView: React.FC = () => {
                 cart.map((item, index) => {
                   const isLoose = item.unitType === 'LOOSE';
                   const packCount = item.unitsPerPack || 10;
+                  const isMembership = item.itemCategory === 'MEMBERSHIP';
+
+                  if (isMembership) {
+                    return (
+                      <tr
+                        key={item.id}
+                        className="bg-amber-50/60 dark:bg-amber-950/30 border-l-4 border-amber-500"
+                      >
+                        <td className="text-center font-mono text-amber-700 dark:text-amber-400 font-bold">
+                          {index + 1}
+                        </td>
+                        <td>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Crown className="h-4 w-4 text-amber-500 shrink-0" />
+                            <p className="font-bold text-slate-900 dark:text-slate-100">
+                              {item.medicineName}
+                            </p>
+                            <span className="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-mono font-bold text-[9px] border border-amber-300 dark:border-amber-700">
+                              PAID SERVICE
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">
+                            Member: <strong>{item.membershipDetails?.customerName || walkinName}</strong> ({item.membershipDetails?.customerPhone || walkinPhone}) • Duration: {item.membershipDetails?.durationLabel || '12 Months'}
+                          </p>
+                        </td>
+                        <td className="font-mono text-amber-800 dark:text-amber-300 font-bold text-xs">
+                          {item.batchNumber}
+                        </td>
+                        <td className="font-mono text-slate-600 dark:text-slate-400 text-[11px]">
+                          {item.expiryDate}
+                        </td>
+                        <td className="font-mono text-slate-400 text-[11px]">
+                          {item.hsnCode || '998319'}
+                        </td>
+
+                        {/* Quantity: Fixed 1 Service */}
+                        <td className="text-center">
+                          <span className="inline-block px-2.5 py-1 rounded-md bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 font-mono font-bold text-xs text-amber-800 dark:text-amber-300 shadow-xs">
+                            1 Service
+                          </span>
+                        </td>
+
+                        <td className="text-right font-mono text-slate-500">₹{item.mrp.toFixed(2)}</td>
+                        <td className="text-right font-mono font-bold text-slate-800 dark:text-slate-200">
+                          <div>₹{item.rate.toFixed(2)}</div>
+                          <span className="text-[9px] font-normal text-slate-400">Fixed Fee</span>
+                        </td>
+
+                        {/* Line Discount: 0% */}
+                        <td className="text-center font-mono text-xs text-slate-400">
+                          0%
+                        </td>
+
+                        <td className="text-center font-mono text-slate-500">0%</td>
+
+                        <td className="text-right font-mono font-black text-amber-700 dark:text-amber-400 text-sm">
+                          ₹{item.totalAmount.toFixed(2)}
+                        </td>
+
+                        {/* Remove Service from Bill */}
+                        <td className="text-center">
+                          <button
+                            onClick={() => removeItemFromCart(index)}
+                            title="Remove membership service from current bill"
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }
 
                   return (
                     <tr key={item.id} className={isLoose ? 'bg-purple-50/40 dark:bg-purple-950/20' : ''}>
@@ -1801,39 +2586,39 @@ export const POSBillingView: React.FC = () => {
           </table>
         </div>
 
-        {/* 4. Bottom Running Bill Summary & Checkout Ribbon */}
-        <div className="bg-slate-100 dark:bg-slate-950 border-t border-slate-300 dark:border-slate-800 p-3 flex flex-wrap items-center justify-between gap-4">
-          {/* Item Count & Special Discount */}
-          <div className="flex items-center gap-4 text-xs">
-            <div>
-              <span className="text-[10px] uppercase text-slate-400 font-bold block">Total Formulations / Units</span>
-              <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+        {/* 4. Bottom Running Bill Summary & Checkout Ribbon (Strict Single-Line Layout) */}
+        <div className="bg-slate-100 dark:bg-slate-950 border-t border-slate-300 dark:border-slate-800 px-3 py-2 flex items-center justify-between gap-2.5 md:gap-3 overflow-x-auto whitespace-nowrap min-w-0">
+          {/* Left Side: Summary Metrics & Bill Discount */}
+          <div className="flex items-center gap-2.5 md:gap-3 text-xs shrink-0">
+            <div className="shrink-0">
+              <span className="text-[9px] uppercase text-slate-400 font-bold block leading-tight">Total Formulations / Units</span>
+              <span className="font-mono font-bold text-xs text-slate-800 dark:text-slate-200">
                 {cart.length} Items ({cart.reduce((s, i) => s + i.quantity, 0)} Units/Strips)
               </span>
             </div>
 
-            <div>
-              <span className="text-[10px] uppercase text-slate-400 font-bold block">Gross Amount</span>
-              <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
+            <div className="shrink-0 border-l border-slate-200 dark:border-slate-800 pl-2.5 md:pl-3">
+              <span className="text-[9px] uppercase text-slate-400 font-bold block leading-tight">Gross Amount</span>
+              <span className="font-mono font-semibold text-xs text-slate-700 dark:text-slate-300">
                 ₹{grossTotal.toFixed(2)}
               </span>
             </div>
 
-            <div>
-              <span className="text-[10px] uppercase text-slate-400 font-bold block">GST Tax</span>
-              <span className="font-mono text-slate-600">
+            <div className="shrink-0 border-l border-slate-200 dark:border-slate-800 pl-2.5 md:pl-3">
+              <span className="text-[9px] uppercase text-slate-400 font-bold block leading-tight">GST Tax</span>
+              <span className="font-mono text-xs text-slate-600 dark:text-slate-400">
                 ₹{totalTax.toFixed(2)}
               </span>
             </div>
 
             {membershipDiscountAmount > 0 && (
-              <div className="flex items-center gap-1.5 border-l border-emerald-300 dark:border-emerald-700 pl-3">
-                <Crown className="h-4 w-4 text-emerald-600" />
+              <div className="flex items-center gap-1.5 border-l border-emerald-300 dark:border-emerald-700 pl-2.5 md:pl-3 shrink-0">
+                <Crown className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                 <div>
-                  <span className="text-[10px] uppercase text-emerald-700 dark:text-emerald-400 font-bold block">
+                  <span className="text-[9px] uppercase text-emerald-700 dark:text-emerald-400 font-bold block leading-tight">
                     Member Disc ({effectiveMemberDiscountPercent}%):
                   </span>
-                  <span className="font-mono font-black text-emerald-700 dark:text-emerald-400">
+                  <span className="font-mono font-black text-xs text-emerald-700 dark:text-emerald-400">
                     -₹{membershipDiscountAmount.toFixed(2)}
                   </span>
                 </div>
@@ -1841,26 +2626,26 @@ export const POSBillingView: React.FC = () => {
             )}
 
             {/* Bill Level Discount */}
-            <div className="flex items-center gap-1 border-l border-slate-300 dark:border-slate-700 pl-3">
-              <span className="text-[10px] uppercase text-slate-500 font-bold">Bill Disc %:</span>
+            <div className="flex items-center gap-1.5 border-l border-slate-200 dark:border-slate-800 pl-2.5 md:pl-3 shrink-0">
+              <span className="text-[9px] uppercase text-slate-500 font-bold">Bill Disc %:</span>
               <input
                 type="number"
                 min="0"
                 max="100"
                 value={overallDiscountPercent}
                 onChange={(e) => setOverallDiscountPercent(parseFloat(e.target.value) || 0)}
-                className="w-12 px-1 py-0.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono text-xs font-bold"
+                className="w-11 px-1 py-0.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono text-xs font-bold text-center"
               />
             </div>
           </div>
 
-          {/* Grand Total & Instant Checkout Actions */}
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block">
+          {/* Right Side: Grand Total & Instant Single-Line Checkout Actions */}
+          <div className="flex items-center gap-2.5 shrink-0 ml-auto pl-2">
+            <div className="text-right shrink-0">
+              <span className="text-[9px] uppercase font-bold text-slate-500 dark:text-slate-400 block leading-tight">
                 Net Payable (Round Off {roundOff >= 0 ? `+${roundOff}` : roundOff})
               </span>
-              <span className="font-mono text-2xl font-black text-emerald-700 dark:text-emerald-400">
+              <span className="font-mono text-lg md:text-xl font-black text-emerald-700 dark:text-emerald-400 leading-none">
                 ₹{grandTotal.toFixed(2)}
               </span>
             </div>
@@ -1868,7 +2653,7 @@ export const POSBillingView: React.FC = () => {
             <button
               onClick={handleClearCart}
               disabled={cart.length === 0}
-              className="px-3 py-2 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-200 text-slate-600 text-xs font-bold disabled:opacity-40"
+              className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-bold disabled:opacity-40 shrink-0 whitespace-nowrap transition-colors"
             >
               F8 Clear
             </button>
@@ -1876,10 +2661,10 @@ export const POSBillingView: React.FC = () => {
             <button
               onClick={() => setIsPaymentModalOpen(true)}
               disabled={cart.length === 0}
-              className="px-6 py-2.5 rounded bg-emerald-700 hover:bg-emerald-800 text-white font-black text-sm flex items-center gap-2 shadow-sm disabled:opacity-40"
+              className="px-3.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs md:text-sm flex items-center gap-1.5 shadow-sm disabled:opacity-40 shrink-0 whitespace-nowrap transition-colors"
             >
+              <Printer className="h-4 w-4 shrink-0" />
               <span>F4 Collect & Print</span>
-              <span className="px-1.5 py-0.5 rounded bg-black/20 text-[10px]">F4</span>
             </button>
           </div>
         </div>
@@ -2261,13 +3046,14 @@ export const POSBillingView: React.FC = () => {
           </div>
 
           {/* Payment Mode Selection */}
-          <div className="grid grid-cols-5 gap-1.5">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
             {[
               { id: 'CASH', label: 'Cash', icon: Banknote },
               { id: 'UPI', label: 'UPI', icon: IndianRupee },
               { id: 'SPLIT', label: 'Split (Cash+UPI)', icon: Layers },
               { id: 'CARD', label: 'Card', icon: CreditCard },
               { id: 'CREDIT', label: 'Credit / Khata', icon: BookOpen },
+              { id: 'POS_TERMINAL', label: 'Pine Labs POS Terminal', icon: SmartphoneNfc },
             ].map((mode) => {
               const Icon = mode.icon;
               return (
@@ -2281,7 +3067,7 @@ export const POSBillingView: React.FC = () => {
                   }`}
                 >
                   <Icon className="h-4 w-4" />
-                  <span className="text-[10.5px] leading-tight">{mode.label}</span>
+                  <span className="text-[10px] leading-tight text-center">{mode.label}</span>
                 </button>
               );
             })}
@@ -2452,17 +3238,211 @@ export const POSBillingView: React.FC = () => {
             </div>
           )}
 
-          {/* Confirm Action Button */}
-          <button
-            onClick={handleCompleteSale}
-            className="w-full py-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-sm shadow-md transition-transform active:scale-[0.99]"
-          >
-            {paymentMode === 'CREDIT'
-              ? `Confirm Khata Entry (Due: ₹${creditBalanceDue.toFixed(2)}) & Print Receipt`
-              : paymentMode === 'SPLIT'
-              ? `Confirm Split Bill (Cash: ₹${splitCash.toFixed(2)} + UPI: ₹${splitUpi.toFixed(2)}) & Print`
-              : 'Confirm & Print Tax Receipt (Enter)'}
-          </button>
+          {/* Mode 5: PINE LABS POS TERMINAL */}
+          {paymentMode === 'POS_TERMINAL' && (
+            <div className="p-4 bg-slate-900 text-white rounded-2xl border border-slate-800 space-y-3.5 shadow-lg">
+              {/* Terminal Header & Device Meta */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20">
+                    <SmartphoneNfc className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black tracking-wide uppercase text-slate-100">
+                      Pine Labs-style POS Terminal
+                    </h4>
+                    <p className="text-[10px] font-mono text-slate-400">
+                      Device ID: <span className="text-emerald-400 font-bold">{settings.posTerminalDeviceId || 'PINELABS-POS-M884'}</span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={checkTerminalHealthStatus}
+                    disabled={isCheckingTerminalHealth}
+                    title="Refresh device status"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${isCheckingTerminalHealth ? 'animate-spin' : ''}`} />
+                  </button>
+                  <div
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+                      terminalHealth?.status === 'HEALTHY'
+                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                        : 'bg-rose-950 text-rose-400 border border-rose-800'
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        terminalHealth?.status === 'HEALTHY' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
+                      }`}
+                    />
+                    {terminalHealth?.status === 'HEALTHY' ? 'Connected' : 'Disconnected'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Status Grid */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-0.5">
+                  <span className="text-[10px] text-slate-400 block font-medium">Merchant:</span>
+                  <span className="font-bold text-slate-200 truncate block text-[11px]">
+                    {settings.posTerminalMerchantName || 'CarePlus Pharmacy & Wellness'}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-0.5">
+                  <span className="text-[10px] text-slate-400 block font-medium">Device Readiness:</span>
+                  <span
+                    className={`font-bold text-[11px] uppercase ${
+                      terminalHealth?.terminalStatus === 'READY'
+                        ? 'text-emerald-400'
+                        : terminalHealth?.terminalStatus === 'BUSY'
+                        ? 'text-amber-400'
+                        : 'text-rose-400'
+                    }`}
+                  >
+                    {terminalHealth?.terminalStatus || 'Checking...'}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-0.5">
+                  <span className="text-[10px] text-slate-400 block font-medium">Current Invoice:</span>
+                  <span className="font-mono font-bold text-slate-200">
+                    {`INV-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(5, '0')}`}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-0.5">
+                  <span className="text-[10px] text-slate-400 block font-medium">Payment Status:</span>
+                  <span
+                    className={`font-mono font-black text-[11px] ${
+                      terminalPaymentState === 'SUCCESS'
+                        ? 'text-emerald-400'
+                        : terminalPaymentState === 'PROCESSING' || terminalPaymentState === 'REQUESTED'
+                        ? 'text-amber-400'
+                        : terminalPaymentState === 'FAILED' || terminalPaymentState === 'TIMED_OUT'
+                        ? 'text-rose-400'
+                        : 'text-slate-300'
+                    }`}
+                  >
+                    {terminalPaymentState}
+                  </span>
+                </div>
+              </div>
+
+              {/* Exact Payable Amount Banner */}
+              <div className="p-3 rounded-xl bg-slate-800/90 border border-slate-700 flex justify-between items-center">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
+                    Authoritative Bill Amount
+                  </span>
+                  <span className="text-[10px] text-slate-400">Includes all taxes, round-off & discounts</span>
+                </div>
+                <span className="font-mono text-xl font-black text-emerald-400">
+                  ₹{grandTotal.toFixed(2)}
+                </span>
+              </div>
+
+              {/* In-Flight Waiting / Processing Banner */}
+              {['REQUESTED', 'PROCESSING'].includes(terminalPaymentState) && (
+                <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-600/40 space-y-2 text-center animate-pulse">
+                  <div className="flex items-center justify-center gap-2 text-amber-300 text-xs font-bold">
+                    <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+                    <span>Waiting for payment confirmation on POS Terminal...</span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 font-sans">
+                    Ask patient to tap/insert card or scan Bharat UPI QR on terminal screen.
+                  </p>
+                  {activePaymentAttempt?.requestId && (
+                    <p className="text-[9.5px] font-mono text-slate-400">
+                      Req ID: {activePaymentAttempt.requestId}
+                    </p>
+                  )}
+                  <button
+                    onClick={handleCancelTerminalPayment}
+                    disabled={isTerminalActionLoading}
+                    className="mt-1 px-4 py-1.5 rounded-lg bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-xs transition-colors"
+                  >
+                    Cancel Payment on Terminal
+                  </button>
+                </div>
+              )}
+
+              {/* Error / Failure Banner */}
+              {(terminalPaymentState === 'FAILED' || terminalPaymentState === 'CANCELLED' || terminalPaymentState === 'TIMED_OUT' || terminalErrorMsg) &&
+                !['REQUESTED', 'PROCESSING'].includes(terminalPaymentState) && (
+                  <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-700/50 text-rose-300 text-xs space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold">
+                      <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
+                      <span>Terminal Notice: {terminalPaymentState}</span>
+                    </div>
+                    {terminalErrorMsg && <p className="text-[11px] text-slate-300 pl-5">{terminalErrorMsg}</p>}
+                  </div>
+                )}
+
+              {/* Reconciliation Notice */}
+              {terminalPaymentState === 'RECONCILIATION_REQUIRED' && (
+                <div className="p-3 rounded-xl bg-amber-950/60 border border-amber-600 text-amber-200 text-xs space-y-2">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <span>Reconciliation Required</span>
+                  </div>
+                  <p className="text-[11px]">
+                    Transaction status could not be authoritatively verified. Check simulator terminal before re-attempting.
+                  </p>
+                  {activePaymentAttempt?.transactionId && (
+                    <button
+                      onClick={() =>
+                        verifyAndFinalizeTerminalPayment(
+                          activePaymentAttempt.transactionId!,
+                          activePaymentAttempt.requestId,
+                          activePaymentAttempt.invoiceNumber,
+                          activePaymentAttempt.amount
+                        )
+                      }
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold text-xs"
+                    >
+                      Retry Verification Now
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Primary Collect Action Button */}
+              {!['REQUESTED', 'PROCESSING'].includes(terminalPaymentState) && (
+                <button
+                  onClick={handleCollectPaymentOnTerminal}
+                  disabled={isTerminalActionLoading || cart.length === 0 || grandTotal <= 0}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-black text-sm shadow-md transition-all flex items-center justify-center gap-2 active:scale-[0.99]"
+                >
+                  {isTerminalActionLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Transmitting to POS Terminal...</span>
+                    </>
+                  ) : (
+                    <>
+                      <SmartphoneNfc className="h-4 w-4" />
+                      <span>Collect Payment on Terminal (₹{grandTotal.toFixed(2)})</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Confirm Action Button (Only for Non-Terminal Payment Modes) */}
+          {paymentMode !== 'POS_TERMINAL' && (
+            <button
+              onClick={handleCompleteSale}
+              className="w-full py-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-sm shadow-md transition-transform active:scale-[0.99]"
+            >
+              {paymentMode === 'CREDIT'
+                ? `Confirm Khata Entry (Due: ₹${creditBalanceDue.toFixed(2)}) & Print Receipt`
+                : paymentMode === 'SPLIT'
+                ? `Confirm Split Bill (Cash: ₹${splitCash.toFixed(2)} + UPI: ₹${splitUpi.toFixed(2)}) & Print`
+                : 'Confirm & Print Tax Receipt (Enter)'}
+            </button>
+          )}
         </div>
       </Modal>
 
@@ -2903,148 +3883,233 @@ export const POSBillingView: React.FC = () => {
       <Modal
         isOpen={isQuickEnrollOpen}
         onClose={() => setIsQuickEnrollOpen(false)}
-        title="1-Click Customer Loyalty Enrollment"
-        subtitle="Instantly register customer for 10% / 20% loyalty discounts without leaving POS"
-        maxWidth="md"
+        title="Register Membership"
+        subtitle="Paid customer membership service"
+        maxWidth="xl"
       >
-        <form onSubmit={handleQuickEnrollSubmit} className="space-y-4 text-xs">
-          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800 space-y-1">
-            <div className="flex items-center gap-1.5 font-bold text-emerald-900 dark:text-emerald-200">
-              <Crown className="h-4 w-4 text-amber-500" />
-              <span>Pharmacy Club Membership Registration</span>
-            </div>
-            <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
-              New members start at 10% loyalty discount on all eligible medicines. Once rolling 3-month purchases reach {formatINR(membershipSettings.purchaseThreshold, false)}, tier automatically upgrades to 20%!
-            </p>
-          </div>
+        <div className="py-1">
+          <CompactMembershipRegistrationForm
+            isModal
+            initialCustomerName={selectedCustomer ? selectedCustomer.name : (walkinName !== 'Walk-in Cash Customer' ? walkinName : '')}
+            initialCustomerPhone={currentActivePhone}
+            onSuccessAdded={() => {
+              setIsQuickEnrollOpen(false);
+            }}
+            onCancel={() => setIsQuickEnrollOpen(false)}
+          />
+        </div>
+      </Modal>
 
-          <div className="space-y-3">
-            <div>
-              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                Customer Name <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={quickEnrollName}
-                onChange={(e) => setQuickEnrollName(e.target.value)}
-                placeholder="Patient / Customer Full Name"
-                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-semibold"
-              />
-            </div>
-
-            <div>
-              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                Mobile Number (Lookup Key) <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="tel"
-                required
-                maxLength={10}
-                value={quickEnrollPhone}
-                onChange={(e) => setQuickEnrollPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                placeholder="10-digit mobile number"
-                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-bold"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="font-bold text-slate-700 dark:text-slate-300">
-                  Membership Plan & Fee
-                </label>
-                <span className="text-[10px] text-emerald-700 font-bold">Paid Club Membership</span>
+      {/* MODAL 7: Quick Barcode Link & Rename to Medicine */}
+      <Modal
+        isOpen={isBarcodeLinkModalOpen}
+        onClose={() => {
+          setIsBarcodeLinkModalOpen(false);
+          setLinkErrorMessage(null);
+        }}
+        title="Link Packaging Barcode to Medicine"
+        subtitle="Rename & associate the manufacturer barcode on the medicine box to your existing inventory"
+        maxWidth="lg"
+      >
+        <div className="space-y-4 text-xs">
+          {/* Scanned Barcode Display */}
+          <div className="p-3 rounded-xl bg-slate-900 text-white flex items-center justify-between gap-3 shadow-inner">
+            <div className="flex items-center gap-2.5">
+              <div className="h-9 w-9 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                <Barcode className="h-5 w-5" />
               </div>
-              <div className="grid grid-cols-4 gap-1.5">
-                {[
-                  { months: 1, label: '1 Month', price: 29 },
-                  { months: 3, label: '3 Months', price: 59 },
-                  { months: 6, label: '6 Months', price: 99 },
-                  { months: 12, label: '1 Year', price: 149 },
-                ].map((dur) => (
-                  <button
-                    key={dur.months}
-                    type="button"
-                    onClick={() => {
-                      setQuickEnrollDuration(dur.months);
-                      setQuickEnrollFee(dur.price);
-                    }}
-                    className={`p-1.5 rounded-lg border text-center transition-colors ${
-                      quickEnrollDuration === dur.months
-                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
-                        : 'bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200'
-                    }`}
-                  >
-                    <span className="block font-bold text-xs">{dur.label}</span>
-                    <span className={`text-[10px] font-mono block ${quickEnrollDuration === dur.months ? 'text-emerald-100 font-bold' : 'text-emerald-700 dark:text-emerald-400'}`}>
-                      ₹{dur.price}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Fee Collected (₹)
-                </label>
+              <div className="flex-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Scanned Packaging Barcode / QR:
+                </span>
                 <input
-                  type="number"
-                  min={0}
-                  value={quickEnrollFee}
-                  onChange={(e) => setQuickEnrollFee(parseFloat(e.target.value) || 0)}
-                  className="w-full px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 font-mono font-bold text-xs"
+                  type="text"
+                  value={barcodeToLink}
+                  onChange={(e) => setBarcodeToLink(e.target.value)}
+                  placeholder="Scan or enter barcode..."
+                  className="font-mono text-sm font-black text-emerald-400 bg-transparent border-b border-emerald-500/40 focus:outline-none focus:border-emerald-400 py-0.5 w-full"
                 />
               </div>
-
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Payment Mode
-                </label>
-                <div className="grid grid-cols-3 gap-1">
-                  {(['UPI', 'CASH', 'CARD'] as PaymentMode[]).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setQuickEnrollPayMode(mode)}
-                      className={`py-1.5 rounded text-[10px] font-bold border transition-colors ${
-                        quickEnrollPayMode === mode
-                          ? 'bg-slate-900 text-white dark:bg-emerald-600 border-slate-900 dark:border-emerald-600'
-                          : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                      }`}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
-              </div>
             </div>
+            <span className="text-[10px] font-mono bg-white/10 text-slate-300 px-2 py-1 rounded shrink-0">
+              {phoneScannerStatus === 'CONNECTED' ? '📱 Phone Active' : 'Scanner Ready'}
+            </span>
+          </div>
 
-            <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 flex justify-between items-center text-slate-600 dark:text-slate-300">
-              <span>Calculated Expiry Date:</span>
-              <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
-                {calculateExpiryDate(new Date().toISOString().split('T')[0], quickEnrollDuration)}
-              </span>
+          <p className="text-[11px] text-slate-600 dark:text-slate-400">
+            Select the medicine in your inventory that matches this packaging. Once linked, scanning this box/strip will immediately add it to your POS bill without needing to print labels.
+          </p>
+
+          {linkErrorMessage && (
+            <div className="p-2 rounded bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+              <span className="font-semibold">{linkErrorMessage}</span>
+            </div>
+          )}
+
+          {/* Search Medicine Input */}
+          <div className="space-y-1.5">
+            <label className="font-bold text-[11px] text-slate-700 dark:text-slate-300 block">
+              1. Search Your Medicine Inventory:
+            </label>
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                autoFocus
+                value={linkSearch}
+                onChange={(e) => setLinkSearch(e.target.value)}
+                placeholder="Type brand name (e.g. Dolo, Augmentin, Pan-D, Azithral)..."
+                className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+              />
             </div>
           </div>
 
-          <div className="flex gap-2 pt-2">
+          {/* Filtered Medicines List */}
+          <div className="space-y-1.5">
+            <span className="text-[10px] font-bold uppercase text-slate-500 block">
+              2. Select Medicine to Link:
+            </span>
+            <div className="max-h-48 overflow-y-auto space-y-1.5 border border-slate-200 dark:border-slate-800 rounded-lg p-1.5">
+              {medicines
+                .filter(
+                  (m) =>
+                    !linkSearch.trim() ||
+                    m.name.toLowerCase().includes(linkSearch.toLowerCase()) ||
+                    m.genericName.toLowerCase().includes(linkSearch.toLowerCase()) ||
+                    m.manufacturer.toLowerCase().includes(linkSearch.toLowerCase())
+                )
+                .slice(0, 15)
+                .map((m) => {
+                  const isSelected = linkSelectedMedicineId === m.id;
+                  const firstBatch = m.batches[0];
+                  return (
+                    <div
+                      key={m.id}
+                      onClick={() => {
+                        setLinkSelectedMedicineId(m.id);
+                        setLinkErrorMessage(null);
+                      }}
+                      className={`p-2.5 rounded-lg border cursor-pointer transition-all flex items-center justify-between gap-2 ${
+                        isSelected
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 ring-1 ring-emerald-500'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/60'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                            {m.name}
+                          </span>
+                          <span className="text-[10px] text-slate-500">({m.packSize})</span>
+                          {m.barcode && (
+                            <span className="text-[9px] font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded text-slate-500">
+                              Current: {m.barcode.slice(0, 12)}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-slate-500 block">
+                          {m.genericName} • {m.manufacturer}
+                        </span>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="font-mono font-bold text-slate-900 dark:text-slate-100 block">
+                          ₹{firstBatch?.saleRate || firstBatch?.mrp || 0}
+                        </span>
+                        <span className="text-[10px] text-emerald-600 font-bold block">
+                          Stock: {m.totalStock}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+
+          {/* Unit Type Selection */}
+          <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+              Billing Unit for this Packaging:
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setLinkUnitType('STRIP')}
+                className={`px-3 py-1 rounded text-xs font-bold transition-colors ${
+                  linkUnitType === 'STRIP'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700'
+                }`}
+              >
+                Full Strip / Box
+              </button>
+              <button
+                type="button"
+                onClick={() => setLinkUnitType('LOOSE')}
+                className={`px-3 py-1 rounded text-xs font-bold transition-colors ${
+                  linkUnitType === 'LOOSE'
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700'
+                }`}
+              >
+                Loose Tablet / Cut-Strip
+              </button>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
-              onClick={() => setIsQuickEnrollOpen(false)}
-              className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 font-bold hover:bg-slate-100 dark:hover:bg-slate-800"
+              onClick={() => setIsBarcodeLinkModalOpen(false)}
+              className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100"
             >
               Cancel
             </button>
             <button
-              type="submit"
-              className="flex-1 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold shadow-sm"
+              type="button"
+              disabled={!linkSelectedMedicineId || !barcodeToLink.trim()}
+              onClick={() => {
+                if (!linkSelectedMedicineId || !barcodeToLink.trim()) return;
+                const targetMed = medicines.find((m) => m.id === linkSelectedMedicineId);
+                if (!targetMed) return;
+
+                const res = assignBarcodeToMedicine(
+                  linkSelectedMedicineId,
+                  barcodeToLink.trim(),
+                  linkUnitType,
+                  linkNotes
+                );
+
+                if (!res.success) {
+                  setLinkErrorMessage(res.error || 'Failed to link barcode.');
+                  return;
+                }
+
+                // Add to current POS cart immediately!
+                const batchToUse =
+                  targetMed.batches.find((b) => b.availableQuantity > 0) ||
+                  targetMed.batches[0];
+
+                if (batchToUse) {
+                  addItemToCart(targetMed, batchToUse, 1, linkUnitType);
+                  setScanFeedback({
+                    type: 'SUCCESS',
+                    message: `Linked barcode "${barcodeToLink.trim()}" to ${targetMed.name} and added to bill!`,
+                    code: barcodeToLink.trim(),
+                    time: Date.now(),
+                    medicineName: targetMed.name,
+                  });
+                }
+
+                setIsBarcodeLinkModalOpen(false);
+              }}
+              className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-50"
             >
-              Confirm & Enroll Member
+              Link Barcode & Add to Bill →
             </button>
           </div>
-        </form>
+        </div>
       </Modal>
 
       {/* Invoice Print & WhatsApp Preview Modal */}

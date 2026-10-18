@@ -31,15 +31,20 @@ export const DashboardView: React.FC = () => {
     expenses,
     heldBills,
     setActiveTab,
+    getCashDrawerSummary,
   } = usePharmacy();
 
-  const todayStr = new Date().toISOString().substring(0, 10);
+  const realToday = new Date().toISOString().substring(0, 10);
+  const hasInvoicesToday = invoices.some((i) => i.invoiceDate.startsWith(realToday));
+  const todayStr = hasInvoicesToday ? realToday : '2026-08-30';
   const todayInvoices = invoices.filter((i) => i.invoiceDate.startsWith(todayStr));
   const todayPurchases = purchases.filter((p) => p.billDate === todayStr);
 
+  const cashDrawer = getCashDrawerSummary(todayStr);
+
   // Financial Operational Numbers
   const todaySalesTotal = todayInvoices.reduce((sum, i) => sum + i.grandTotal, 0);
-  const todaySalesCash = todayInvoices.filter((i) => i.paymentMode === 'CASH').reduce((s, i) => s + i.amountPaid, 0);
+  const todaySalesCash = cashDrawer.totalSalesCash;
   const todaySalesUPI = todayInvoices.filter((i) => i.paymentMode === 'UPI').reduce((s, i) => s + i.amountPaid, 0);
   const todaySalesCard = todayInvoices.filter((i) => i.paymentMode === 'CARD').reduce((s, i) => s + i.amountPaid, 0);
   const todaySalesCredit = todayInvoices.filter((i) => i.paymentMode === 'CREDIT').reduce((s, i) => s + i.balanceDue, 0);
@@ -148,9 +153,13 @@ export const DashboardView: React.FC = () => {
         <div className="erp-widget border-l-4 border-l-blue-600">
           <span className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 block">Cash in Drawer</span>
           <p className="text-base font-black font-mono text-blue-700 dark:text-blue-400 mt-0.5">
-            ₹{todaySalesCash.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            ₹{cashDrawer.expectedCashInDrawer.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
           </p>
-          <span className="text-[10px] font-mono text-slate-500 block">Counter 1</span>
+          <span className="text-[10px] font-mono text-slate-500 block">
+            {cashDrawer.todaySalesReturnCashRefunds > 0
+              ? `-₹${cashDrawer.todaySalesReturnCashRefunds.toFixed(2)} Refunds`
+              : 'Counter 1 Active'}
+          </span>
         </div>
 
         {/* 3. UPI Collection */}

@@ -19,10 +19,11 @@ import {
   UserCheck,
   RotateCcw,
   MessageSquare,
+  Crown,
 } from 'lucide-react';
 
 export const CustomerManagementView: React.FC = () => {
-  const { customers, invoices, settings, addCustomer, updateCustomer, setActiveTab } = usePharmacy();
+  const { customers, invoices, memberships, settings, addCustomer, updateCustomer, setActiveTab } = usePharmacy();
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
@@ -196,13 +197,29 @@ export const CustomerManagementView: React.FC = () => {
             <tbody>
               {filtered.map((c) => {
                 const stats = getCustomerPurchaseStats(c);
+                const member = memberships.find(
+                  (m) => m.customerPhone === c.phone || (m.customerId && m.customerId === c.id)
+                );
+                const isMemberActive = Boolean(member && member.status === 'ACTIVE');
+
                 return (
                   <tr key={c.id}>
                     <td
                       onClick={() => handleOpenHistory(c)}
                       className="font-bold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-emerald-700"
                     >
-                      {c.name}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span>{c.name}</span>
+                        {isMemberActive && (
+                          <span
+                            title="Active Pharmacy Club Member"
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700"
+                          >
+                            <Crown className="h-2.5 w-2.5 text-amber-500" />
+                            {member?.membershipId || 'MEMBER'}
+                          </span>
+                        )}
+                      </div>
                       {c.address && <span className="block text-[10px] text-slate-400 font-normal truncate max-w-[180px]">{c.address}</span>}
                     </td>
                     <td className="font-mono text-slate-700 dark:text-slate-300 font-semibold">{c.phone}</td>
@@ -311,6 +328,58 @@ export const CustomerManagementView: React.FC = () => {
                       </span>
                     </div>
                   </div>
+
+                  {/* Membership Status Ribbon */}
+                  {(() => {
+                    const custMember = memberships.find(
+                      (m) => m.customerPhone === selectedCust.phone || (m.customerId && m.customerId === selectedCust.id)
+                    );
+                    if (custMember) {
+                      return (
+                        <div className="p-3 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 border border-amber-300 dark:border-amber-800 rounded-xl flex items-center justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <Crown className="h-5 w-5 text-amber-500 shrink-0" />
+                            <div>
+                              <span className="font-bold text-amber-900 dark:text-amber-200">
+                                Pharmacy Club Member: {custMember.membershipId}
+                              </span>
+                              <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                                Plan: <strong>{custMember.durationLabel}</strong> • Expiry: <strong>{custMember.expiryDate}</strong> • Status:{' '}
+                                <span className="font-bold uppercase">{custMember.status}</span>
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHistoryModalOpen(false);
+                              setActiveTab('customer-membership');
+                            }}
+                            className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition-colors shadow-xs"
+                          >
+                            Manage / Renew →
+                          </button>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="p-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between gap-2">
+                        <span className="text-slate-600 dark:text-slate-400">
+                          Customer is not enrolled in Pharmacy Club.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHistoryModalOpen(false);
+                            setActiveTab('customer-membership');
+                          }}
+                          className="px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs"
+                        >
+                          + Enroll in Club (₹29-₹149)
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {/* Last Month's Purchased Medicines List */}
                   <div>

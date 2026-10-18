@@ -1,6 +1,6 @@
 export type ScheduleType = 'NORMAL' | 'SCHEDULE_H' | 'SCHEDULE_H1' | 'SCHEDULE_X' | 'NARCOTIC' | 'OTC';
 
-export type PaymentMode = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'CREDIT' | 'SPLIT';
+export type PaymentMode = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'CREDIT' | 'SPLIT' | 'POS_TERMINAL';
 
 export type UserRole = 'OWNER' | 'MANAGER' | 'PHARMACIST' | 'CASHIER' | 'STAFF';
 
@@ -120,6 +120,25 @@ export interface InvoiceItem {
   totalAmount: number;
   costRate: number;
   isMemberDiscountEligible?: boolean; // Can be toggled on invoice line item
+  itemCategory?: 'MEDICINE' | 'MEMBERSHIP' | 'SERVICE';
+  membershipDetails?: {
+    registrationId: string;
+    memberId: string;
+    planName: string;
+    durationMonths: number;
+    durationLabel: string;
+    customerName: string;
+    customerPhone: string;
+    customerEmail?: string;
+    customerAddress?: string;
+    startDate: string;
+    expiryDate: string;
+    fee: number;
+    paymentMode?: PaymentMode;
+    isRenewal?: boolean;
+    renewingMembershipId?: string;
+    notes?: string;
+  };
 }
 
 export interface SalesInvoice {
@@ -155,6 +174,28 @@ export interface SalesInvoice {
   membershipDiscountAmount?: number;
   membershipTier?: '10%' | '20%' | 'NONE';
   eligiblePurchaseAmount?: number;
+  // Membership sale & activation tracking
+  saleCategory?: 'ALL' | 'MEDICINE' | 'MEMBERSHIP' | 'COMBINED';
+  membershipRegistrationId?: string;
+  membershipMemberId?: string;
+  membershipPlanName?: string;
+  membershipDurationLabel?: string;
+  membershipFeeAmount?: number;
+  membershipStartDate?: string;
+  membershipExpiryDate?: string;
+  membershipActivationStatus?: 'NOT_APPLICABLE' | 'PENDING' | 'ACTIVATED' | 'CANCELLED';
+  // External POS Terminal Integration fields
+  terminalDeviceId?: string;
+  terminalTransactionId?: string;
+  terminalRequestId?: string;
+  terminalAuthCode?: string;
+  terminalRrn?: string;
+  terminalPaymentMethod?: string;
+  terminalCardLast4?: string;
+  terminalCardNetwork?: string;
+  terminalUpiVpa?: string;
+  terminalStatus?: 'SUCCESS' | 'FAILED' | 'CANCELLED' | 'PENDING';
+  isDemoTerminal?: boolean;
 }
 
 export interface HeldBills {
@@ -177,7 +218,7 @@ export interface SalesReturnItem {
   refundRate: number;
   gstRate: number;
   refundAmount: number;
-  reason: 'EXPIRED' | 'DAMAGED' | 'WRONG_MEDICINE' | 'PATIENT_RECOVERED' | 'OTHER';
+  reason: 'EXPIRED' | 'DAMAGED' | 'WRONG_MEDICINE' | 'PATIENT_RECOVERED' | 'BROKEN_OR_LEAKED' | 'OTHER';
 }
 
 export interface SalesReturn {
@@ -190,10 +231,42 @@ export interface SalesReturn {
   customerName: string;
   items: SalesReturnItem[];
   totalRefundAmount: number;
-  refundMode: 'CASH' | 'CREDIT_NOTE' | 'BANK_TRANSFER';
+  refundMode: 'CASH' | 'CREDIT_NOTE' | 'BANK_TRANSFER' | 'UPI' | 'CARD';
   creditNoteNumber?: string;
   notes?: string;
   processedBy: string;
+  cashDrawerTransactionId?: string;
+  isCashRefundPaid?: boolean;
+}
+
+export type CashTransactionType =
+  | 'CASH_SALE'
+  | 'CUSTOMER_COLLECTION'
+  | 'SALES_RETURN_REFUND'
+  | 'EXPENSE_PAYMENT'
+  | 'SUPPLIER_PAYMENT'
+  | 'OPENING_FLOAT'
+  | 'CASH_DEPOSIT'
+  | 'CASH_WITHDRAWAL';
+
+export interface CashDrawerTransaction {
+  id: string;
+  transactionNumber: string;
+  date: string;
+  type: CashTransactionType;
+  direction: 'IN' | 'OUT';
+  amount: number;
+  paymentMethod: PaymentMode;
+  referenceId?: string;
+  referenceNumber?: string;
+  returnId?: string;
+  originalInvoiceNumber?: string;
+  partyId?: string;
+  partyName?: string;
+  reason?: string;
+  cashierName: string;
+  notes?: string;
+  isReconciled?: boolean;
 }
 
 export interface PurchaseItem {
@@ -280,7 +353,7 @@ export interface Expense {
 export interface PaymentTransaction {
   id: string;
   date: string;
-  type: 'CUSTOMER_COLLECTION' | 'SUPPLIER_PAYMENT';
+  type: 'CUSTOMER_COLLECTION' | 'SUPPLIER_PAYMENT' | 'SALES_RETURN_REFUND';
   partyId: string;
   partyName: string;
   partyType: 'CUSTOMER' | 'SUPPLIER';
@@ -295,12 +368,14 @@ export interface DayClosingRecord {
   date: string;
   closedAt: string;
   closedBy: string;
+  openingCash?: number;
   totalSalesCash: number;
   totalSalesUPI: number;
   totalSalesCard: number;
   totalSalesCredit: number;
   totalGrossSales: number;
   totalCustomerDuesCollected: number;
+  totalCashRefunds?: number;
   totalExpensesPaid: number;
   totalSupplierPayouts: number;
   expectedCashInDrawer: number;
@@ -361,6 +436,14 @@ export interface PharmacySettings {
   enableSoundAlerts: boolean;
   thermalPrintAutoOpen: boolean;
   currencySymbol: string;
+  // POS Terminal Configuration
+  posTerminalBaseUrl?: string;
+  posTerminalDeviceId?: string;
+  posTerminalMerchantName?: string;
+  posTerminalToken?: string;
+  posTerminalIsPaired?: boolean;
+  posTerminalLastPingAt?: string;
+  cashDrawerOpeningBalance?: number;
 }
 
 export interface AIReorderRecommendation {
@@ -416,6 +499,33 @@ export interface MembershipHistoryItem {
   discountAmount?: number;
 }
 
+export interface PendingMembershipRegistration {
+  id: string; // e.g. "reg-mem-${timestamp}-${rand}"
+  memberId: string; // e.g. "MEM-2026-0008"
+  customerId?: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string;
+  customerAddress?: string;
+  planName: string; // "Monthly Plan", "Quarterly Plan", "Half-Yearly Plan", "Annual Plan", "Custom Plan"
+  durationMonths: number;
+  durationLabel: string;
+  fee: number;
+  paymentMode: PaymentMode;
+  startDate: string;
+  expiryDate: string;
+  notes?: string;
+  status: 'PENDING' | 'ACTIVATED' | 'CANCELLED';
+  invoiceId?: string;
+  invoiceNumber?: string;
+  paymentTransactionId?: string;
+  paymentMethod?: string;
+  createdAt: string;
+  activatedAt?: string;
+  isRenewal?: boolean;
+  renewingMembershipId?: string;
+}
+
 export interface Membership {
   id: string;
   membershipId: string; // e.g. "MEM-2026-0001"
@@ -434,6 +544,12 @@ export interface Membership {
   notes?: string;
   createdDate: string;
   createdBy: string;
+  invoiceId?: string;
+  invoiceNumber?: string;
+  registrationId?: string;
+  paymentTransactionId?: string;
+  paymentMethod?: string;
+  renewedFromMembershipId?: string;
   history: MembershipHistoryItem[];
 }
 
@@ -467,3 +583,119 @@ export interface MembershipSettings {
     changes: string;
   }>;
 }
+
+// POS Terminal Integration Models
+export type TerminalPaymentState =
+  | 'IDLE'
+  | 'REQUESTED'
+  | 'PROCESSING'
+  | 'SUCCESS'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'TIMED_OUT'
+  | 'RECONCILIATION_REQUIRED';
+
+export interface TerminalPaymentAttempt {
+  id: string; // Internal attempt ID
+  invoiceNumber: string;
+  requestId: string;
+  transactionId?: string;
+  deviceId: string;
+  amount: number;
+  currency: string;
+  state: TerminalPaymentState;
+  paymentMethod?: string;
+  authCode?: string;
+  rrn?: string;
+  cardLast4?: string;
+  cardNetwork?: string;
+  cardEntryMode?: string;
+  upiVpa?: string;
+  failureReason?: string;
+  isDemo: boolean;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  finalized: boolean;
+}
+
+export interface PosTerminalHealthResponse {
+  status: 'HEALTHY' | 'UNHEALTHY' | 'DISCONNECTED';
+  simulator?: string;
+  deviceId: string;
+  merchantName: string;
+  environment: string;
+  terminalStatus: 'READY' | 'BUSY' | 'UNAVAILABLE' | 'OFFLINE';
+  isPaired: boolean;
+  pairedClientId?: string;
+  firmwareVersion?: string;
+  timestamp?: string;
+}
+
+export interface TerminalPaymentRequestPayload {
+  requestId: string;
+  amount: number;
+  currency: string;
+  invoiceReference: string;
+  paymentMethod?: 'CUSTOMER_CHOICE' | 'CARD_ONLY' | 'UPI_ONLY';
+}
+
+export interface TerminalPaymentResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+  transactionId?: string;
+  requestId?: string;
+  invoiceReference?: string;
+  amount?: number;
+  currency?: string;
+  status: 'PAYMENT_REQUESTED' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+  authCode?: string;
+  rrn?: string;
+  cardLast4?: string;
+  cardNetwork?: string;
+  cardEntryMode?: string;
+  upiVpa?: string;
+  failureReason?: string;
+  isDemo?: boolean;
+  receipt?: Record<string, unknown>;
+  createdAt?: string;
+  completedAt?: string;
+}
+
+export type PhoneScannerStatus = 'DISCONNECTED' | 'WAITING' | 'CONNECTED';
+
+export interface PhoneScannerSessionState {
+  sessionId: string;
+  pairingToken: string;
+  pairingPin: string;
+  expiresAt: number;
+  status: PhoneScannerStatus;
+  connectedDevice?: {
+    name: string;
+    userAgent?: string;
+    ip?: string;
+    connectedAt: number;
+  };
+  lastScan?: {
+    value: string;
+    timestamp: number;
+    matchedMedicineName?: string;
+    status: 'MATCHED' | 'UNKNOWN' | 'IGNORED_WORKFLOW';
+    unitType?: 'STRIP' | 'LOOSE';
+  };
+}
+
+export interface BarcodeQRMapping {
+  id: string;
+  code: string; // The exact decoded QR/barcode string
+  medicineId: string;
+  medicineName: string;
+  batchNumber?: string;
+  unitType?: 'STRIP' | 'LOOSE';
+  packSize?: string;
+  mappedAt: string;
+  notes?: string;
+}
+
+

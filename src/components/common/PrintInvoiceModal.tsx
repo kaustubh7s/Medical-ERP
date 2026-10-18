@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { SalesInvoice } from '@/types/pharmacy';
 import { usePharmacy } from '@/lib/store';
 import { Modal } from '@/components/common/Modal';
-import { Printer, Share2, FileText, CheckCircle2, MessageSquare, Download } from 'lucide-react';
+import { Printer, Share2, FileText, CheckCircle2, MessageSquare, Download, Crown } from 'lucide-react';
 
 interface PrintInvoiceModalProps {
   isOpen: boolean;
@@ -17,7 +17,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
   onClose,
   invoice,
 }) => {
-  const { settings } = usePharmacy();
+  const { settings, memberships, setActiveTab } = usePharmacy();
   const [printFormat, setPrintFormat] = useState<'THERMAL' | 'A4'>('THERMAL');
   const [copied, setCopied] = useState(false);
 
@@ -36,6 +36,10 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
       ? `%0A*Split Breakup:* Cash ₹${invoice.splitDetails.cash.toFixed(2)} + UPI ₹${invoice.splitDetails.upi.toFixed(2)}`
       : '';
 
+    const terminalInfo = invoice.paymentMode === 'POS_TERMINAL'
+      ? `%0A💳 *POS Terminal:* ${invoice.terminalDeviceId || 'PINELABS-POS-M884'}%0A*Txn ID:* ${invoice.terminalTransactionId || 'N/A'}${invoice.terminalAuthCode ? `%0A*Auth Code:* ${invoice.terminalAuthCode}` : ''}${invoice.terminalCardLast4 ? `%0A*Card:* **** ${invoice.terminalCardLast4} (${invoice.terminalCardNetwork || 'CARD'})` : ''}${invoice.terminalUpiVpa ? `%0A*UPI:* ${invoice.terminalUpiVpa}` : ''}`
+      : '';
+
     const membershipInfo = invoice.membershipId
       ? `%0A⭐ *Club Member:* ${invoice.membershipId} (${invoice.membershipDiscountPercent}% Tier - Saved ₹${(invoice.membershipDiscountAmount || 0).toFixed(2)})`
       : '';
@@ -51,7 +55,7 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
       itemsList +
       `%0A━━━━━━━━━━━━━━━━━━%0A` +
       `💰 *Grand Total: ₹${invoice.grandTotal.toFixed(2)}*%0A` +
-      `💳 *Payment:* ${invoice.paymentMode} (${invoice.paymentStatus})${splitInfo}%0A` +
+      `💳 *Payment:* ${invoice.paymentMode === 'POS_TERMINAL' ? 'Pine Labs POS Terminal' : invoice.paymentMode} (${invoice.paymentStatus})${splitInfo}${terminalInfo}%0A` +
       (invoice.balanceDue > 0 ? `⚠️ *Pending Khata Due:* ₹${invoice.balanceDue.toFixed(2)}%0A` : '') +
       `━━━━━━━━━━━━━━━━━━%0A` +
       `📍 ${settings.address}%0A` +
@@ -62,6 +66,24 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
     const cleanPhone = phone.length === 10 ? `91${phone}` : phone;
     return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${message}`;
   };
+
+  const activeMembership = memberships.find(
+    (m) =>
+      m.membershipId === invoice.membershipMemberId ||
+      m.invoiceId === invoice.id ||
+      (invoice.customerPhone && m.customerPhone === invoice.customerPhone)
+  );
+
+  const isMembershipSale =
+    invoice.saleCategory === 'MEMBERSHIP' ||
+    invoice.saleCategory === 'COMBINED' ||
+    invoice.items.some((i) => i.itemCategory === 'MEMBERSHIP');
+
+  const isMembershipActivated =
+    invoice.paymentStatus === 'PAID' &&
+    (invoice.membershipActivationStatus === 'ACTIVATED' ||
+      Boolean(invoice.membershipMemberId) ||
+      (isMembershipSale && activeMembership?.status === 'ACTIVE'));
 
   return (
     <Modal
@@ -116,6 +138,72 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
         </div>
       </div>
 
+      {/* 9. Membership Activated Successfully Confirmation Alert */}
+      {isMembershipActivated && (
+        <div className="mb-4 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-950/60 dark:to-teal-950/60 border border-emerald-300 dark:border-emerald-700 rounded-2xl shadow-xs">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-emerald-600 text-white shadow-xs">
+                <Crown className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="font-black text-sm text-emerald-950 dark:text-emerald-100 flex items-center gap-1.5">
+                  <span>Membership Activated Successfully</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200">
+                    PAID & ACTIVE
+                  </span>
+                </h4>
+                <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
+                  Customer loyalty benefits (10% - 20% discount on medicines) unlocked immediately.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                setActiveTab('customer-membership');
+              }}
+              className="text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white transition-colors shadow-xs"
+            >
+              View Member Profile →
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-xs bg-white/90 dark:bg-slate-900/90 p-3 rounded-xl border border-emerald-200 dark:border-emerald-800">
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Member ID</span>
+              <strong className="font-mono text-emerald-700 dark:text-emerald-400 text-xs">
+                {activeMembership?.membershipId || invoice.membershipMemberId || invoice.membershipId || 'MEM-ACTIVE'}
+              </strong>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Customer</span>
+              <strong className="truncate block">{invoice.customerName}</strong>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Plan</span>
+              <strong>{activeMembership?.durationLabel || invoice.membershipPlanName || 'Annual Plan'}</strong>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Amount Paid</span>
+              <strong className="font-mono text-emerald-600">₹{(invoice.membershipFeeAmount || activeMembership?.feePaid || 0).toFixed(2)}</strong>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Start Date</span>
+              <span className="font-mono text-[11px]">{activeMembership?.startDate || invoice.invoiceDate.split(' ')[0]}</span>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Expiry Date</span>
+              <strong className="font-mono text-[11px] text-amber-700 dark:text-amber-400">
+                {activeMembership?.expiryDate || '—'}
+              </strong>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Invoice Previews Container */}
       <div className="bg-slate-100 dark:bg-slate-950 p-4 rounded-xl overflow-x-auto flex justify-center">
         {printFormat === 'THERMAL' ? (
@@ -161,23 +249,29 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
                 <span className="w-1/6 text-right">Amt</span>
               </div>
               <div className="space-y-1.5 pt-1.5">
-                {invoice.items.map((item) => (
-                  <div key={item.id}>
-                    <div className="font-bold truncate">
-                      {item.medicineName} {item.unitType === 'LOOSE' ? `(${item.quantity} Tabs Loose)` : ''}
+                {invoice.items.map((item) => {
+                  const isMembership = item.itemCategory === 'MEMBERSHIP';
+                  return (
+                    <div key={item.id}>
+                      <div className="font-bold truncate">
+                        {isMembership ? `★ ${item.medicineName}` : item.medicineName}{' '}
+                        {item.unitType === 'LOOSE' ? `(${item.quantity} Tabs Loose)` : ''}
+                      </div>
+                      <div className="flex justify-between text-[9px] text-gray-600">
+                        <span className="w-1/2">
+                          {isMembership
+                            ? `ID:${item.batchNumber} (HSN:${item.hsnCode || '998319'})`
+                            : `B:${item.batchNumber} (Exp:${item.expiryDate?.substring(0, 7)})`}
+                        </span>
+                        <span className="w-1/6 text-center font-bold">
+                          {isMembership ? '1 Svc' : `${item.quantity} ${item.unitType === 'LOOSE' ? 'Tab' : 'Strip'}`}
+                        </span>
+                        <span className="w-1/6 text-right">{item.rate.toFixed(2)}</span>
+                        <span className="w-1/6 text-right font-bold">{item.totalAmount.toFixed(2)}</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between text-[9px] text-gray-600">
-                      <span className="w-1/2">
-                        B:{item.batchNumber} (Exp:{item.expiryDate?.substring(0, 7)})
-                      </span>
-                      <span className="w-1/6 text-center font-bold">
-                        {item.quantity} {item.unitType === 'LOOSE' ? 'Tab' : 'Strip'}
-                      </span>
-                      <span className="w-1/6 text-right">{item.rate.toFixed(2)}</span>
-                      <span className="w-1/6 text-right font-bold">{item.totalAmount.toFixed(2)}</span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -229,17 +323,63 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
                 <span className="font-bold">
                   {invoice.paymentMode === 'SPLIT' && invoice.splitDetails
                     ? `SPLIT (Cash: ₹${invoice.splitDetails.cash.toFixed(0)} | UPI: ₹${invoice.splitDetails.upi.toFixed(0)})`
+                    : invoice.paymentMode === 'POS_TERMINAL'
+                    ? `PINE LABS POS TERMINAL (${invoice.paymentStatus})`
                     : `${invoice.paymentMode} (${invoice.paymentStatus})`}
                 </span>
               </div>
             </div>
 
-            {/* Payment & UPI Verification */}
-            <div className="py-2 text-center border-b border-dashed border-black">
-              <span className="text-[10px] font-bold font-mono uppercase tracking-wider">
-                UPI / Digital Payment
-              </span>
-            </div>
+            {/* POS Terminal Settlement Info */}
+            {invoice.paymentMode === 'POS_TERMINAL' ? (
+              <div className="py-2 border-b border-dashed border-black text-[9px] font-mono space-y-0.5">
+                <div className="flex justify-between font-bold">
+                  <span>TERMINAL DEVICE:</span>
+                  <span>{invoice.terminalDeviceId || 'PINELABS-POS-M884'}</span>
+                </div>
+                {invoice.terminalTransactionId && (
+                  <div className="flex justify-between">
+                    <span>TXN ID:</span>
+                    <span>{invoice.terminalTransactionId}</span>
+                  </div>
+                )}
+                {invoice.terminalAuthCode && (
+                  <div className="flex justify-between">
+                    <span>AUTH CODE:</span>
+                    <span>{invoice.terminalAuthCode}</span>
+                  </div>
+                )}
+                {invoice.terminalRrn && (
+                  <div className="flex justify-between">
+                    <span>RRN:</span>
+                    <span>{invoice.terminalRrn}</span>
+                  </div>
+                )}
+                {invoice.terminalCardLast4 && (
+                  <div className="flex justify-between">
+                    <span>CARD:</span>
+                    <span>**** {invoice.terminalCardLast4} ({invoice.terminalCardNetwork || 'CARD'})</span>
+                  </div>
+                )}
+                {invoice.terminalUpiVpa && (
+                  <div className="flex justify-between">
+                    <span>UPI VPA:</span>
+                    <span>{invoice.terminalUpiVpa}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-[8px] text-gray-600 pt-0.5 font-bold">
+                  <span>TERMINAL STATUS:</span>
+                  <span className="text-emerald-700">VERIFIED SUCCESS (DEMO)</span>
+                </div>
+              </div>
+            ) : (
+              /* Payment & UPI Verification */
+              <div className="py-2 text-center border-b border-dashed border-black">
+                <span className="text-[10px] font-bold font-mono uppercase tracking-wider">
+                  UPI / Digital Payment
+                </span>
+              </div>
+            )}
 
             {/* Footer */}
             <div className="pt-2 text-center text-[9px] text-gray-700">
@@ -290,11 +430,24 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
                 <p>Invoice No: <strong className="text-sm text-emerald-800">{invoice.invoiceNumber}</strong></p>
                 <p>Date & Time: <strong>{invoice.invoiceDate}</strong></p>
                 <p>
-                  Payment: <strong className="uppercase">{invoice.paymentMode}</strong>{' '}
+                  Payment: <strong className="uppercase">
+                    {invoice.paymentMode === 'POS_TERMINAL' ? 'Pine Labs POS Terminal' : invoice.paymentMode}
+                  </strong>{' '}
                   {invoice.paymentMode === 'SPLIT' && invoice.splitDetails
                     ? `(Cash: ₹${invoice.splitDetails.cash.toFixed(2)} | UPI: ₹${invoice.splitDetails.upi.toFixed(2)})`
                     : `(${invoice.paymentStatus})`}
                 </p>
+                {invoice.paymentMode === 'POS_TERMINAL' && (
+                  <div className="text-[10px] text-slate-700 bg-slate-50 border border-slate-200 rounded p-1.5 mt-1 text-left font-mono">
+                    <p className="font-bold text-slate-900">Pine Labs-style POS Terminal Verification (Demo)</p>
+                    <p>Device: {invoice.terminalDeviceId || 'PINELABS-POS-M884'}</p>
+                    {invoice.terminalTransactionId && <p>Txn ID: {invoice.terminalTransactionId}</p>}
+                    {invoice.terminalAuthCode && <p>Auth: {invoice.terminalAuthCode} | RRN: {invoice.terminalRrn || 'N/A'}</p>}
+                    {invoice.terminalCardLast4 && <p>Card: **** {invoice.terminalCardLast4} ({invoice.terminalCardNetwork})</p>}
+                    {invoice.terminalUpiVpa && <p>UPI: {invoice.terminalUpiVpa}</p>}
+                    <p className="text-[9px] text-emerald-700 font-bold">Status: Authoritatively Verified & Settled</p>
+                  </div>
+                )}
                 <p>Billed By: {invoice.cashierName}</p>
               </div>
             </div>
@@ -316,27 +469,39 @@ export const PrintInvoiceModal: React.FC<PrintInvoiceModalProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {invoice.items.map((item, idx) => (
-                  <tr key={item.id} className="hover:bg-slate-50">
-                    <td className="p-2 text-center font-mono text-slate-500">{idx + 1}</td>
-                    <td className="p-2">
-                      <p className="font-bold text-slate-900">
-                        {item.medicineName} {item.unitType === 'LOOSE' ? '(Loose Tabs)' : ''}
-                      </p>
-                      <p className="text-[10px] text-slate-500 italic">{item.genericName}</p>
-                    </td>
-                    <td className="p-2 text-center font-mono text-slate-600">{item.hsnCode}</td>
-                    <td className="p-2 text-center font-mono font-semibold">{item.batchNumber}</td>
-                    <td className="p-2 text-center font-mono text-slate-600">{item.expiryDate?.substring(0, 7)}</td>
-                    <td className="p-2 text-center font-bold font-mono">
-                      {item.quantity} {item.unitType === 'LOOSE' ? 'Tabs (Loose)' : 'Strips'}
-                    </td>
-                    <td className="p-2 text-right font-mono">{item.mrp.toFixed(2)}</td>
-                    <td className="p-2 text-right font-mono font-semibold">{item.rate.toFixed(2)}</td>
-                    <td className="p-2 text-center font-mono">{item.gstRate}%</td>
-                    <td className="p-2 text-right font-mono font-bold">{item.totalAmount.toFixed(2)}</td>
-                  </tr>
-                ))}
+                {invoice.items.map((item, idx) => {
+                  const isMembership = item.itemCategory === 'MEMBERSHIP';
+                  return (
+                    <tr
+                      key={item.id}
+                      className={isMembership ? 'bg-amber-50/60 dark:bg-amber-950/20' : 'hover:bg-slate-50'}
+                    >
+                      <td className="p-2 text-center font-mono text-slate-500">{idx + 1}</td>
+                      <td className="p-2">
+                        <p className="font-bold text-slate-900 flex items-center gap-1">
+                          {isMembership && <Crown className="h-3 w-3 text-amber-500 shrink-0" />}
+                          <span>{item.medicineName}</span>
+                          {item.unitType === 'LOOSE' ? ' (Loose Tabs)' : ''}
+                        </p>
+                        <p className="text-[10px] text-slate-500 italic">
+                          {isMembership
+                            ? `Customer: ${item.membershipDetails?.customerName || invoice.customerName} (${item.membershipDetails?.customerPhone || invoice.customerPhone}) • Duration: ${item.membershipDetails?.durationLabel || '12 Months'}`
+                            : item.genericName}
+                        </p>
+                      </td>
+                      <td className="p-2 text-center font-mono text-slate-600">{item.hsnCode || '998319'}</td>
+                      <td className="p-2 text-center font-mono font-semibold">{item.batchNumber}</td>
+                      <td className="p-2 text-center font-mono text-slate-600">{item.expiryDate?.substring(0, 7) || '—'}</td>
+                      <td className="p-2 text-center font-bold font-mono">
+                        {isMembership ? '1 Service' : `${item.quantity} ${item.unitType === 'LOOSE' ? 'Tabs (Loose)' : 'Strips'}`}
+                      </td>
+                      <td className="p-2 text-right font-mono">{item.mrp.toFixed(2)}</td>
+                      <td className="p-2 text-right font-mono font-semibold">{item.rate.toFixed(2)}</td>
+                      <td className="p-2 text-center font-mono">{item.gstRate}%</td>
+                      <td className="p-2 text-right font-mono font-bold">{item.totalAmount.toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 

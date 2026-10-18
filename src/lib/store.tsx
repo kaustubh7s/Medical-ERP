@@ -27,6 +27,12 @@ import {
   MembershipStatus,
   MembershipHistoryItem,
   MembershipHistoryAction,
+  PendingMembershipRegistration,
+  InvoiceItem,
+  CashDrawerTransaction,
+  PhoneScannerStatus,
+  PhoneScannerSessionState,
+  BarcodeQRMapping,
 } from '@/types/pharmacy';
 import {
   INITIAL_MEDICINES,
@@ -40,6 +46,9 @@ import {
   INITIAL_AUDIT_LOGS,
   INITIAL_MEMBERSHIPS,
   INITIAL_MEMBERSHIP_SETTINGS,
+  INITIAL_SALES_RETURNS,
+  INITIAL_CASH_DRAWER_TRANSACTIONS,
+  INITIAL_BARCODE_MAPPINGS,
 } from '@/lib/initialData';
 import { calculateExpiryDate, getMembershipExpiryInfo } from '@/lib/membershipUtils';
 
@@ -54,6 +63,7 @@ interface PharmacyStoreContextType {
   purchaseReturns: PurchaseReturn[];
   expenses: Expense[];
   payments: PaymentTransaction[];
+  cashDrawerTransactions: CashDrawerTransaction[];
   dayClosingRecords: DayClosingRecord[];
   damagedStock: DamagedStockEntry[];
   currentUser: User;
@@ -113,7 +123,30 @@ interface PharmacyStoreContextType {
   addExpense: (exp: Omit<Expense, 'id'>) => void;
   deleteExpense: (id: string) => void;
   recordPayment: (payment: Omit<PaymentTransaction, 'id' | 'date'>) => void;
-  recordDayClosing: (actualCash: number, notes?: string) => DayClosingRecord;
+  recordCashDrawerTransaction: (tx: Omit<CashDrawerTransaction, 'id' | 'transactionNumber'>) => CashDrawerTransaction;
+  getCashDrawerSummary: (dateStr?: string) => {
+    openingCash: number;
+    totalSalesCash: number;
+    totalSalesUPI: number;
+    totalSalesCard: number;
+    totalSalesTerminal: number;
+    totalSalesCredit: number;
+    totalGrossSales: number;
+    todayCustomerDuesCollected: number;
+    todaySalesReturnCashRefunds: number;
+    todayExpensesCash: number;
+    todaySupplierPayoutsCash: number;
+    otherCashInflows: number;
+    otherCashOutflows: number;
+    totalCashInflows: number;
+    totalCashOutflows: number;
+    expectedCashInDrawer: number;
+    cashRefundTransactions: CashDrawerTransaction[];
+    unreconciledReturns: SalesReturn[];
+  };
+  reconcileCashDrawerReturns: () => number;
+  updateSalesReturnRefundStatus: (returnId: string, isPaid: boolean) => void;
+  recordDayClosing: (actualCash: number, notes?: string, customDate?: string) => DayClosingRecord;
 
   // Notifications & Audit
   markNotificationAsRead: (id: string) => void;
@@ -138,6 +171,43 @@ interface PharmacyStoreContextType {
   toggleMedicineMembershipDiscount: (medicineId: string) => void;
   setMedicineMembershipDiscountBulk: (medicineIds: string[], isEligible: boolean) => void;
 
+  // Paid Customer Membership Billing Integration
+  pendingMemberships: PendingMembershipRegistration[];
+  pendingMembershipCartItem: InvoiceItem | null;
+  setPendingMembershipCartItem: (item: InvoiceItem | null) => void;
+  createPendingMembership: (data: Omit<PendingMembershipRegistration, 'id' | 'memberId' | 'status' | 'createdAt'>) => PendingMembershipRegistration;
+  cancelPendingMembership: (registrationId: string) => void;
+  addMembershipToCartAndNavigate: (pendingReg: PendingMembershipRegistration) => void;
+
+  // Barcode & QR Mapping
+  barcodeMappings: BarcodeQRMapping[];
+  addBarcodeMapping: (mapping: Omit<BarcodeQRMapping, 'id' | 'mappedAt'>) => { success: boolean; mapping?: BarcodeQRMapping; error?: string };
+  removeBarcodeMapping: (id: string) => void;
+  assignBarcodeToMedicine: (
+    medicineId: string,
+    barcode: string,
+    unitType?: 'STRIP' | 'LOOSE',
+    notes?: string
+  ) => { success: boolean; error?: string; medicine?: Medicine };
+  findMedicineByBarcodeOrQR: (code: string) => { medicine: Medicine; batch?: Batch; unitType?: 'STRIP' | 'LOOSE' } | null;
+
+  // Phone QR Scanner State & Controls
+  phoneScannerSession: PhoneScannerSessionState | null;
+  phoneScannerStatus: PhoneScannerStatus;
+  lastScannedItem: {
+    value: string;
+    timestamp: number;
+    medicineName?: string;
+    status: 'MATCHED' | 'UNKNOWN' | 'IGNORED_WORKFLOW';
+    unitType?: 'STRIP' | 'LOOSE';
+  } | null;
+  pendingScannedBarcode: string | null;
+  setPendingScannedBarcode: (val: string | null) => void;
+  startPhoneScannerSession: (customHost?: string) => Promise<PhoneScannerSessionState | null>;
+  disconnectPhoneScanner: () => Promise<void>;
+  isPhoneScannerModalOpen: boolean;
+  setIsPhoneScannerModalOpen: (open: boolean) => void;
+
   // Backup & Reset
   resetToDemoData: () => void;
   importDataBackup: (jsonString: string) => boolean;
@@ -155,11 +225,12 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
   const [suppliers, setSuppliers] = useState<Supplier[]>(INITIAL_SUPPLIERS);
   const [invoices, setInvoices] = useState<SalesInvoice[]>(INITIAL_INVOICES);
   const [heldBills, setHeldBills] = useState<HeldBills[]>([]);
-  const [salesReturns, setSalesReturns] = useState<SalesReturn[]>([]);
+  const [salesReturns, setSalesReturns] = useState<SalesReturn[]>(INITIAL_SALES_RETURNS);
   const [purchases, setPurchases] = useState<PurchaseEntry[]>(INITIAL_PURCHASES);
   const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES);
   const [payments, setPayments] = useState<PaymentTransaction[]>([]);
+  const [cashDrawerTransactions, setCashDrawerTransactions] = useState<CashDrawerTransaction[]>(INITIAL_CASH_DRAWER_TRANSACTIONS);
   const [dayClosingRecords, setDayClosingRecords] = useState<DayClosingRecord[]>([]);
   const [damagedStock, setDamagedStock] = useState<DamagedStockEntry[]>([]);
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
@@ -167,6 +238,8 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<PharmacySettings>(INITIAL_SETTINGS);
   const [memberships, setMemberships] = useState<Membership[]>(INITIAL_MEMBERSHIPS);
   const [membershipSettings, setMembershipSettings] = useState<MembershipSettings>(INITIAL_MEMBERSHIP_SETTINGS);
+  const [pendingMemberships, setPendingMemberships] = useState<PendingMembershipRegistration[]>([]);
+  const [pendingMembershipCartItem, setPendingMembershipCartItem] = useState<InvoiceItem | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(INITIAL_AUDIT_LOGS);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -175,6 +248,23 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [offlineQueue, setOfflineQueue] = useState<SalesInvoice[]>([]);
+
+  // Barcode & QR Mapping State
+  const [barcodeMappings, setBarcodeMappings] = useState<BarcodeQRMapping[]>(INITIAL_BARCODE_MAPPINGS);
+
+  // Phone QR Scanner State
+  const [phoneScannerSession, setPhoneScannerSession] = useState<PhoneScannerSessionState | null>(null);
+  const [phoneScannerStatus, setPhoneScannerStatus] = useState<PhoneScannerStatus>('DISCONNECTED');
+  const [lastScannedItem, setLastScannedItem] = useState<{
+    value: string;
+    timestamp: number;
+    medicineName?: string;
+    status: 'MATCHED' | 'UNKNOWN' | 'IGNORED_WORKFLOW';
+    unitType?: 'STRIP' | 'LOOSE';
+  } | null>(null);
+  const [pendingScannedBarcode, setPendingScannedBarcode] = useState<string | null>(null);
+  const [isPhoneScannerModalOpen, setIsPhoneScannerModalOpen] = useState(false);
+  const sseRef = React.useRef<EventSource | null>(null);
 
   // Online / Offline Listeners
   useEffect(() => {
@@ -205,7 +295,12 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         if (parsed.suppliers) setSuppliers(parsed.suppliers);
         if (parsed.invoices) setInvoices(parsed.invoices);
         if (parsed.heldBills) setHeldBills(parsed.heldBills);
-        if (parsed.salesReturns) setSalesReturns(parsed.salesReturns);
+        if (parsed.salesReturns && parsed.salesReturns.length > 0) {
+          setSalesReturns(parsed.salesReturns);
+        } else {
+          setSalesReturns(INITIAL_SALES_RETURNS);
+        }
+        if (parsed.cashDrawerTransactions) setCashDrawerTransactions(parsed.cashDrawerTransactions);
         if (parsed.purchases) setPurchases(parsed.purchases);
         if (parsed.purchaseReturns) setPurchaseReturns(parsed.purchaseReturns);
         if (parsed.expenses) setExpenses(parsed.expenses);
@@ -216,7 +311,13 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         if (parsed.settings) setSettings(parsed.settings);
         if (parsed.memberships) setMemberships(parsed.memberships);
         if (parsed.membershipSettings) setMembershipSettings(parsed.membershipSettings);
+        if (parsed.pendingMemberships) setPendingMemberships(parsed.pendingMemberships);
         if (parsed.auditLogs) setAuditLogs(parsed.auditLogs);
+        if (parsed.barcodeMappings) setBarcodeMappings(parsed.barcodeMappings);
+      } else {
+        // First-time initialize with INITIAL_SALES_RETURNS and INITIAL_BARCODE_MAPPINGS
+        setSalesReturns(INITIAL_SALES_RETURNS);
+        setBarcodeMappings(INITIAL_BARCODE_MAPPINGS);
       }
 
       // Default to Light Mode unless explicitly set to dark
@@ -250,13 +351,16 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         purchaseReturns,
         expenses,
         payments,
+        cashDrawerTransactions,
         dayClosingRecords,
         damagedStock,
         users,
         settings,
         memberships,
         membershipSettings,
+        pendingMemberships,
         auditLogs,
+        barcodeMappings,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
     } catch (e) {
@@ -274,13 +378,16 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     purchaseReturns,
     expenses,
     payments,
+    cashDrawerTransactions,
     dayClosingRecords,
     damagedStock,
     users,
     settings,
     memberships,
     membershipSettings,
+    pendingMemberships,
     auditLogs,
+    barcodeMappings,
   ]);
 
   // Compute Notifications
@@ -619,10 +726,179 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       invoiceDate,
     };
 
-    // Deduct batch stock
+    // Inspect items for membership service line items
+    const membershipItem = invoiceData.items.find(
+      (item) => item.itemCategory === 'MEMBERSHIP' || item.medicineId === 'SERVICE_MEMBERSHIP' || !!item.membershipDetails
+    );
+    const hasMedicineItems = invoiceData.items.some(
+      (item) => item.itemCategory !== 'MEMBERSHIP' && item.medicineId !== 'SERVICE_MEMBERSHIP'
+    );
+
+    let saleCategory: 'ALL' | 'MEDICINE' | 'MEMBERSHIP' | 'COMBINED' = 'MEDICINE';
+    if (membershipItem && hasMedicineItems) {
+      saleCategory = 'COMBINED';
+    } else if (membershipItem) {
+      saleCategory = 'MEMBERSHIP';
+    } else {
+      saleCategory = 'MEDICINE';
+    }
+
+    newInvoice.saleCategory = saleCategory;
+
+    const memDetails = membershipItem?.membershipDetails;
+    const isPaid = invoiceData.paymentStatus === 'PAID';
+
+    if (memDetails) {
+      newInvoice.membershipRegistrationId = memDetails.registrationId;
+      newInvoice.membershipMemberId = memDetails.memberId;
+      newInvoice.membershipPlanName = memDetails.planName;
+      newInvoice.membershipDurationLabel = memDetails.durationLabel;
+      newInvoice.membershipFeeAmount = memDetails.fee;
+      newInvoice.membershipStartDate = memDetails.startDate;
+      newInvoice.membershipExpiryDate = memDetails.expiryDate;
+      newInvoice.membershipActivationStatus = isPaid ? 'ACTIVATED' : 'PENDING';
+
+      if (isPaid) {
+        // Authoritatively activate pending registration
+        setPendingMemberships((prev) =>
+          prev.map((p) =>
+            p.id === memDetails.registrationId
+              ? {
+                  ...p,
+                  status: 'ACTIVATED',
+                  activatedAt: invoiceDate,
+                  invoiceId: newInvoice.id,
+                  invoiceNumber: invNumber,
+                  paymentMethod: invoiceData.paymentMode,
+                  paymentTransactionId: (newInvoice as any).terminalTransactionId,
+                }
+              : p
+          )
+        );
+
+        if (memDetails.isRenewal && memDetails.renewingMembershipId) {
+          // Process renewal: extend expiry date, add RENEWED history, keep previous history
+          renewMembership(
+            memDetails.renewingMembershipId,
+            memDetails.durationMonths,
+            `Renewed via invoice ${invNumber}. Paid ₹${memDetails.fee} (${invoiceData.paymentMode})`,
+            memDetails.fee,
+            invoiceData.paymentMode
+          );
+        } else {
+          // Create new active membership if not already registered
+          setMemberships((prev) => {
+            const alreadyExists = prev.some(
+              (m) =>
+                m.membershipId === memDetails.memberId ||
+                (m.registrationId && m.registrationId === memDetails.registrationId)
+            );
+            if (alreadyExists) return prev;
+
+            const newMember: Membership = {
+              id: `mem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              membershipId: memDetails.memberId,
+              customerId: invoiceData.customerId,
+              customerName: memDetails.customerName,
+              customerPhone: memDetails.customerPhone,
+              customerEmail: memDetails.customerEmail,
+              customerAddress: memDetails.customerAddress,
+              startDate: memDetails.startDate,
+              durationMonths: memDetails.durationMonths,
+              durationLabel: memDetails.durationLabel,
+              expiryDate: memDetails.expiryDate,
+              status: 'ACTIVE',
+              feePaid: memDetails.fee,
+              paymentMode: invoiceData.paymentMode,
+              notes: memDetails.notes || `Paid membership fee: ₹${memDetails.fee} via ${invoiceData.paymentMode} (Invoice ${invNumber})`,
+              createdDate: invoiceDate.split(' ')[0],
+              createdBy: currentUser.name,
+              invoiceId: newInvoice.id,
+              invoiceNumber: invNumber,
+              registrationId: memDetails.registrationId,
+              history: [
+                {
+                  id: `mh-${Date.now()}-init`,
+                  date: invoiceDate,
+                  action: 'CREATED',
+                  newExpiryDate: memDetails.expiryDate,
+                  newStatus: 'ACTIVE',
+                  performedBy: currentUser.name,
+                  invoiceNumber: invNumber,
+                  notes: `Membership activated upon payment of invoice ${invNumber} (${memDetails.durationLabel}, ₹${memDetails.fee} via ${invoiceData.paymentMode}).`,
+                },
+              ],
+            };
+            return [newMember, ...prev];
+          });
+
+          setMembershipSettings((prev) => ({
+            ...prev,
+            nextNumber: prev.nextNumber + 1,
+          }));
+        }
+
+        // Link/update customer CRM record
+        setCustomers((prev) => {
+          const cleanPhone = memDetails.customerPhone.replace(/\D/g, '');
+          const existing = prev.find((c) => c.phone.replace(/\D/g, '') === cleanPhone);
+          if (existing) {
+            return prev.map((c) =>
+              c.id === existing.id
+                ? {
+                    ...c,
+                    name: memDetails.customerName || c.name,
+                    email: memDetails.customerEmail || c.email,
+                    address: memDetails.customerAddress || c.address,
+                  }
+                : c
+            );
+          } else {
+            const newCust: Customer = {
+              id: invoiceData.customerId || `cust-${Date.now()}`,
+              name: memDetails.customerName,
+              phone: memDetails.customerPhone,
+              email: memDetails.customerEmail,
+              address: memDetails.customerAddress,
+              creditLimit: 5000,
+              createdDate: invoiceDate.split(' ')[0],
+              loyaltyPoints: 0,
+              currentDue: 0,
+            };
+            return [...prev, newCust];
+          }
+        });
+
+        logAudit(
+          'SALE',
+          'Membership Module',
+          `Activated membership ${memDetails.memberId} for ${memDetails.customerName} (${memDetails.durationLabel}, ₹${memDetails.fee}) via paid invoice ${invNumber}`
+        );
+      } else {
+        // Unpaid/pending: preserve pending registration
+        setPendingMemberships((prev) =>
+          prev.map((p) =>
+            p.id === memDetails.registrationId
+              ? {
+                  ...p,
+                  invoiceId: newInvoice.id,
+                  invoiceNumber: invNumber,
+                  paymentMethod: invoiceData.paymentMode,
+                }
+              : p
+          )
+        );
+      }
+    } else {
+      newInvoice.membershipActivationStatus = 'NOT_APPLICABLE';
+    }
+
+    // Deduct batch stock strictly for medicines, never for membership service lines
     setMedicines((prevMedicines) =>
       prevMedicines.map((med) => {
-        const matchingItems = invoiceData.items.filter((item) => item.medicineId === med.id);
+        const matchingItems = invoiceData.items.filter(
+          (item) => item.medicineId === med.id && item.itemCategory !== 'MEMBERSHIP'
+        );
         if (matchingItems.length === 0) return med;
 
         let updatedBatches = [...med.batches];
@@ -645,7 +921,7 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       })
     );
 
-    // Update Customer loyalty & dues
+    // Update Customer loyalty & dues (exclude membership fee from earning medicine loyalty points if pure membership)
     if (invoiceData.customerId) {
       setCustomers((prev) =>
         prev.map((c) => {
@@ -726,42 +1002,65 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     setHeldBills((prev) => prev.filter((h) => h.id !== heldId));
   };
 
-  // Sales Return
+  // Sales Return & Credit Note Management
   const processSalesReturn = (returnData: Omit<SalesReturn, 'id' | 'returnNumber' | 'returnDate'>): SalesReturn => {
     const count = salesReturns.length + 1;
-    const returnNumber = `SR-${new Date().getFullYear()}-${String(count).padStart(4, '0')}`;
-    const returnDate = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const returnNumber = (returnData as any).returnNumber || `SR-${new Date().getFullYear()}-${String(count).padStart(4, '0')}`;
+    const returnDate = (returnData as any).returnDate || new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const newReturnId = (returnData as any).id || `sr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-    const newReturn: SalesReturn = {
-      ...returnData,
-      id: `sr-${Date.now()}`,
-      returnNumber,
-      returnDate,
-    };
-
-    setMedicines((prev) =>
-      prev.map((med) => {
-        const returnedItems = returnData.items.filter((item) => item.medicineId === med.id);
-        if (returnedItems.length === 0) return med;
-
-        let updatedBatches = [...med.batches];
-        returnedItems.forEach((item) => {
-          updatedBatches = updatedBatches.map((b) => {
-            if (b.batchNumber === item.batchNumber) {
-              return { ...b, availableQuantity: b.availableQuantity + item.returnQuantity };
-            }
-            return b;
-          });
-        });
-
-        const totalStock = updatedBatches.reduce((sum, b) => sum + b.availableQuantity, 0);
-        return { ...med, batches: updatedBatches, totalStock };
-      })
+    // 1. Inventory Integrity: Separate sellable condition from damaged/expired quarantine
+    const sellableItems = returnData.items.filter(
+      (item) => item.reason !== 'DAMAGED' && item.reason !== 'EXPIRED'
+    );
+    const nonSellableItems = returnData.items.filter(
+      (item) => item.reason === 'DAMAGED' || item.reason === 'EXPIRED'
     );
 
+    // Only unopened / sellable items are restored to active sellable batch stock
+    if (sellableItems.length > 0) {
+      setMedicines((prev) =>
+        prev.map((med) => {
+          const returnedItems = sellableItems.filter((item) => item.medicineId === med.id);
+          if (returnedItems.length === 0) return med;
+
+          let updatedBatches = [...med.batches];
+          returnedItems.forEach((item) => {
+            updatedBatches = updatedBatches.map((b) => {
+              if (b.batchNumber === item.batchNumber) {
+                return { ...b, availableQuantity: b.availableQuantity + item.returnQuantity };
+              }
+              return b;
+            });
+          });
+
+          const totalStock = updatedBatches.reduce((sum, b) => sum + b.availableQuantity, 0);
+          return { ...med, batches: updatedBatches, totalStock };
+        })
+      );
+    }
+
+    // Damaged or Expired returned items are quarantined in the Damaged Stock register
+    if (nonSellableItems.length > 0) {
+      const damagedEntries: DamagedStockEntry[] = nonSellableItems.map((item) => ({
+        id: `dmg-sr-${Date.now()}-${item.invoiceItemId}`,
+        date: returnDate.substring(0, 10),
+        medicineId: item.medicineId,
+        medicineName: item.medicineName,
+        batchNumber: item.batchNumber,
+        quantity: item.returnQuantity,
+        costRate: item.refundRate,
+        totalLoss: Math.round(item.refundAmount * 100) / 100,
+        reason: item.reason === 'DAMAGED' ? 'STRIP_TORN' : 'CONTAMINATED',
+        disposedBy: returnData.processedBy || currentUser?.name || 'Pharmacist',
+      }));
+      setDamagedStock((prev) => [...damagedEntries, ...prev]);
+    }
+
+    // Update original invoice status and cumulative returnAmount
     setInvoices((prev) =>
       prev.map((inv) => {
-        if (inv.id === returnData.originalInvoiceId) {
+        if (inv.id === returnData.originalInvoiceId || inv.invoiceNumber === returnData.originalInvoiceNumber) {
           return {
             ...inv,
             isReturned: true,
@@ -772,17 +1071,96 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       })
     );
 
-    if (returnData.customerId && returnData.refundMode === 'CREDIT_NOTE') {
-      setCustomers((prev) =>
-        prev.map((c) => {
-          if (c.id !== returnData.customerId) return c;
-          return { ...c, currentDue: Math.max(0, c.currentDue - returnData.totalRefundAmount) };
-        })
-      );
-    }
+    let cashTxId: string | undefined = undefined;
+    let isCashPaid = false;
 
-    setSalesReturns((prev) => [newReturn, ...prev]);
-    logAudit('RETURN', 'Sales Return', `Processed Return ${returnNumber} against ${returnData.originalInvoiceNumber} (Refund: ₹${returnData.totalRefundAmount})`);
+    // 2. Settlement & Cash Drawer Deductions:
+    if (returnData.refundMode === 'CASH') {
+      isCashPaid = true;
+
+      // Prevent duplicate cash deductions if this return was already recorded
+      const existingTx = cashDrawerTransactions.find(
+        (t) =>
+          t.referenceNumber === returnNumber ||
+          t.returnId === returnNumber ||
+          t.referenceId === newReturnId
+      );
+
+      if (!existingTx) {
+        cashTxId = `cdt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        const cdtCount = cashDrawerTransactions.length + 1;
+        const cashTx: CashDrawerTransaction = {
+          id: cashTxId,
+          transactionNumber: `CDT-${new Date().getFullYear()}-${String(cdtCount).padStart(5, '0')}`,
+          date: returnDate,
+          type: 'SALES_RETURN_REFUND',
+          direction: 'OUT',
+          amount: returnData.totalRefundAmount,
+          paymentMethod: 'CASH',
+          referenceId: newReturnId,
+          referenceNumber: returnNumber,
+          returnId: returnNumber,
+          originalInvoiceNumber: returnData.originalInvoiceNumber,
+          partyId: returnData.customerId || '',
+          partyName: returnData.customerName || 'Walk-in Customer',
+          reason: 'Medicine sales return',
+          cashierName: returnData.processedBy || currentUser?.name || 'Pharmacist',
+          notes: returnData.notes || `Cash refund for sales return ${returnNumber} against ${returnData.originalInvoiceNumber}`,
+          isReconciled: false,
+        };
+
+        setCashDrawerTransactions((prev) => [cashTx, ...prev]);
+
+        // Also record in PaymentTransaction ledger
+        const payEntry: PaymentTransaction = {
+          id: `pay-sr-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+          date: returnDate,
+          type: 'SALES_RETURN_REFUND',
+          partyId: returnData.customerId || 'walk-in',
+          partyName: returnData.customerName || 'Walk-in Customer',
+          partyType: 'CUSTOMER',
+          amount: returnData.totalRefundAmount,
+          paymentMode: 'CASH',
+          referenceNumber: returnNumber,
+          notes: `Cash refund for sales return ${returnNumber} (Invoice: ${returnData.originalInvoiceNumber})`,
+        };
+        setPayments((prev) => [payEntry, ...prev]);
+      } else {
+        cashTxId = existingTx.id;
+      }
+    } else if (returnData.refundMode === 'CREDIT_NOTE') {
+      // CREDIT NOTE: Does NOT decrease physical cash. Deducts customer khata due directly.
+      if (returnData.customerId) {
+        setCustomers((prev) =>
+          prev.map((c) => {
+            if (c.id !== returnData.customerId) return c;
+            return { ...c, currentDue: Math.max(0, c.currentDue - returnData.totalRefundAmount) };
+          })
+        );
+      }
+    }
+    // BANK_TRANSFER / UPI / CARD refunds do NOT decrease physical cash drawer
+
+    const newReturn: SalesReturn = {
+      ...returnData,
+      id: newReturnId,
+      returnNumber,
+      returnDate,
+      cashDrawerTransactionId: cashTxId,
+      isCashRefundPaid: isCashPaid,
+    };
+
+    setSalesReturns((prev) => {
+      const filtered = prev.filter((r) => r.id !== newReturn.id && r.returnNumber !== newReturn.returnNumber);
+      return [newReturn, ...filtered];
+    });
+
+    logAudit(
+      'RETURN',
+      'Sales Return',
+      `Processed Return ${returnNumber} against ${returnData.originalInvoiceNumber} (Refund: ₹${returnData.totalRefundAmount.toFixed(2)} via ${returnData.refundMode}). ${returnData.refundMode === 'CASH' ? `Deducted ₹${returnData.totalRefundAmount.toFixed(2)} from Cash Drawer.` : 'No physical cash deduction.'}`
+    );
+
     return newReturn;
   };
 
@@ -980,53 +1358,309 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     logAudit('UPDATE', 'Payments Ledger', `Recorded ${paymentData.type}: ₹${paymentData.amount} for ${paymentData.partyName}`);
   };
 
-  // Day End Closing Register
-  const recordDayClosing = (actualCash: number, notes?: string): DayClosingRecord => {
-    const todayStr = new Date().toISOString().substring(0, 10);
-    const todayInvoices = invoices.filter((i) => i.invoiceDate.startsWith(todayStr));
+  // Cash Drawer Management & Out Transactions
+  const recordCashDrawerTransaction = (
+    txData: Omit<CashDrawerTransaction, 'id' | 'transactionNumber'>
+  ): CashDrawerTransaction => {
+    // Idempotent check: if transaction with this referenceId/returnId exists, return existing
+    const existing = cashDrawerTransactions.find(
+      (t) =>
+        (txData.returnId && t.returnId === txData.returnId) ||
+        (txData.referenceId && t.referenceId === txData.referenceId)
+    );
+    if (existing) {
+      return existing;
+    }
 
-    const totalSalesCash = todayInvoices.filter((i) => i.paymentMode === 'CASH').reduce((s, i) => s + i.amountPaid, 0);
-    const totalSalesUPI = todayInvoices.filter((i) => i.paymentMode === 'UPI').reduce((s, i) => s + i.amountPaid, 0);
-    const totalSalesCard = todayInvoices.filter((i) => i.paymentMode === 'CARD').reduce((s, i) => s + i.amountPaid, 0);
-    const totalSalesCredit = todayInvoices.filter((i) => i.paymentMode === 'CREDIT').reduce((s, i) => s + i.balanceDue, 0);
-    const totalGrossSales = todayInvoices.reduce((s, i) => s + i.grandTotal, 0);
+    const cdtCount = cashDrawerTransactions.length + 1;
+    const newTx: CashDrawerTransaction = {
+      ...txData,
+      id: `cdt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      transactionNumber: `CDT-${new Date().getFullYear()}-${String(cdtCount).padStart(5, '0')}`,
+    };
 
-    const todayCustomerDuesCollected = payments
-      .filter((p) => p.date.startsWith(todayStr) && p.type === 'CUSTOMER_COLLECTION' && p.paymentMode === 'CASH')
-      .reduce((s, p) => s + p.amount, 0);
+    setCashDrawerTransactions((prev) => [newTx, ...prev]);
+    logAudit(
+      'UPDATE',
+      'Cash Drawer',
+      `Cash ${newTx.direction}: ₹${newTx.amount.toFixed(2)} for ${newTx.reason} (${newTx.type})`
+    );
+    return newTx;
+  };
 
-    const todayExpensesCash = expenses
-      .filter((e) => e.date === todayStr && e.paymentMode === 'CASH')
-      .reduce((s, e) => s + e.amount, 0);
+  // Reconcile Historical Sales Return Cash Refunds Without Duplicate Entries
+  const reconcileCashDrawerReturns = (): number => {
+    let count = 0;
+    const newDrawerTxs: CashDrawerTransaction[] = [];
+    const newPayTxs: PaymentTransaction[] = [];
 
-    const todaySupplierPayoutsCash = payments
-      .filter((p) => p.date.startsWith(todayStr) && p.type === 'SUPPLIER_PAYMENT' && p.paymentMode === 'CASH')
-      .reduce((s, p) => s + p.amount, 0);
+    // Scan all returns with refundMode === 'CASH'
+    salesReturns.forEach((sr) => {
+      if (sr.refundMode === 'CASH' && sr.isCashRefundPaid !== false) {
+        const alreadyHasTx =
+          cashDrawerTransactions.some(
+            (t) =>
+              t.referenceNumber === sr.returnNumber ||
+              t.returnId === sr.returnNumber ||
+              t.referenceId === sr.id
+          ) ||
+          newDrawerTxs.some(
+            (t) =>
+              t.referenceNumber === sr.returnNumber ||
+              t.returnId === sr.returnNumber ||
+              t.referenceId === sr.id
+          );
 
-    const expectedCashInDrawer = totalSalesCash + todayCustomerDuesCollected - todayExpensesCash - todaySupplierPayoutsCash;
-    const discrepancyAmount = actualCash - expectedCashInDrawer;
+        if (!alreadyHasTx) {
+          count++;
+          const txId = sr.cashDrawerTransactionId || `cdt-rec-${sr.id}`;
+          const drawerTx: CashDrawerTransaction = {
+            id: txId,
+            transactionNumber: `CDT-REC-${sr.returnNumber}`,
+            date: sr.returnDate,
+            type: 'SALES_RETURN_REFUND',
+            direction: 'OUT',
+            amount: sr.totalRefundAmount,
+            paymentMethod: 'CASH',
+            referenceId: sr.id,
+            referenceNumber: sr.returnNumber,
+            returnId: sr.returnNumber,
+            originalInvoiceNumber: sr.originalInvoiceNumber,
+            partyId: sr.customerId || '',
+            partyName: sr.customerName || 'Walk-in Customer',
+            reason: 'Medicine sales return',
+            cashierName: sr.processedBy || 'Pharmacist',
+            notes: `Reconciled historical cash refund for ${sr.returnNumber} (Invoice: ${sr.originalInvoiceNumber})`,
+            isReconciled: true,
+          };
+          newDrawerTxs.push(drawerTx);
 
-    const closingRecord: DayClosingRecord = {
-      id: `close-${Date.now()}`,
-      date: todayStr,
-      closedAt: new Date().toLocaleTimeString(),
-      closedBy: currentUser.name,
+          newPayTxs.push({
+            id: `pay-rec-${sr.id}`,
+            date: sr.returnDate,
+            type: 'SALES_RETURN_REFUND',
+            partyId: sr.customerId || 'walk-in',
+            partyName: sr.customerName || 'Walk-in Customer',
+            partyType: 'CUSTOMER',
+            amount: sr.totalRefundAmount,
+            paymentMode: 'CASH',
+            referenceNumber: sr.returnNumber,
+            notes: `Reconciled historical refund for ${sr.returnNumber}`,
+          });
+        }
+      }
+    });
+
+    if (newDrawerTxs.length > 0) {
+      setCashDrawerTransactions((prev) => [...newDrawerTxs, ...prev]);
+      setPayments((prev) => [...newPayTxs, ...prev]);
+      logAudit(
+        'UPDATE',
+        'Cash Drawer Reconciliation',
+        `Reconciled ${newDrawerTxs.length} historical sales return cash refunds totaling ₹${newDrawerTxs.reduce((s, t) => s + t.amount, 0).toFixed(2)}.`
+      );
+    }
+
+    return count;
+  };
+
+  // Auto-reconcile on initial load once isLoaded is true
+  useEffect(() => {
+    if (!isLoaded) return;
+    reconcileCashDrawerReturns();
+  }, [isLoaded]);
+
+  // Unified Cash Drawer Balance & Daily Summary Calculator
+  const getCashDrawerSummary = (targetDate?: string) => {
+    const isAll = targetDate === 'ALL';
+    const dateStr = targetDate || new Date().toISOString().substring(0, 10);
+    const dayInvoices = isAll
+      ? invoices
+      : invoices.filter((i) => i.invoiceDate.startsWith(dateStr));
+
+    // Cash sales received: PAID invoices with CASH payment mode, plus split cash portion
+    const totalSalesCash =
+      dayInvoices
+        .filter((i) => i.paymentMode === 'CASH' && i.paymentStatus === 'PAID')
+        .reduce((s, i) => s + i.amountPaid, 0) +
+      dayInvoices
+        .filter((i) => i.paymentMode === 'SPLIT' && i.splitDetails?.cash && i.paymentStatus === 'PAID')
+        .reduce((s, i) => s + (i.splitDetails?.cash || 0), 0);
+
+    const totalSalesUPI = dayInvoices
+      .filter((i) => i.paymentMode === 'UPI' && i.paymentStatus === 'PAID')
+      .reduce((s, i) => s + i.amountPaid, 0);
+
+    const totalSalesCard = dayInvoices
+      .filter((i) => i.paymentMode === 'CARD' && i.paymentStatus === 'PAID')
+      .reduce((s, i) => s + i.amountPaid, 0);
+
+    const totalSalesTerminal = dayInvoices
+      .filter((i) => i.paymentMode === 'POS_TERMINAL' && i.paymentStatus === 'PAID')
+      .reduce((s, i) => s + i.amountPaid, 0);
+
+    const totalSalesCredit = dayInvoices
+      .filter((i) => i.paymentMode === 'CREDIT')
+      .reduce((s, i) => s + i.balanceDue, 0);
+
+    const totalGrossSales = dayInvoices.reduce((s, i) => s + i.grandTotal, 0);
+
+    // Customer dues collected in cash
+    const todayCustomerDuesCollected = isAll
+      ? payments.filter((p) => p.type === 'CUSTOMER_COLLECTION' && p.paymentMode === 'CASH').reduce((s, p) => s + p.amount, 0)
+      : payments.filter((p) => p.date.startsWith(dateStr) && p.type === 'CUSTOMER_COLLECTION' && p.paymentMode === 'CASH').reduce((s, p) => s + p.amount, 0);
+
+    // Expenses in cash
+    const todayExpensesCash = isAll
+      ? expenses.filter((e) => e.paymentMode === 'CASH').reduce((s, e) => s + e.amount, 0)
+      : expenses.filter((e) => e.date === dateStr || e.date.startsWith(dateStr)).filter((e) => e.paymentMode === 'CASH').reduce((s, e) => s + e.amount, 0);
+
+    // Supplier settlements in cash
+    const todaySupplierPayoutsCash = isAll
+      ? payments.filter((p) => p.type === 'SUPPLIER_PAYMENT' && p.paymentMode === 'CASH').reduce((s, p) => s + p.amount, 0)
+      : payments.filter((p) => p.date.startsWith(dateStr) && p.type === 'SUPPLIER_PAYMENT' && p.paymentMode === 'CASH').reduce((s, p) => s + p.amount, 0);
+
+    // Cash refunds paid: from cashDrawerTransactions where type === 'SALES_RETURN_REFUND' and paymentMethod === 'CASH'
+    const refundTxsOnDate = isAll
+      ? cashDrawerTransactions.filter((t) => t.type === 'SALES_RETURN_REFUND' && t.paymentMethod === 'CASH')
+      : cashDrawerTransactions.filter((t) => t.date.startsWith(dateStr) && t.type === 'SALES_RETURN_REFUND' && t.paymentMethod === 'CASH');
+
+    // Unreconciled cash returns (if any)
+    const unreconciledOnDate = (isAll ? salesReturns : salesReturns.filter((sr) => sr.returnDate.startsWith(dateStr)))
+      .filter((sr) =>
+        sr.refundMode === 'CASH' &&
+        sr.isCashRefundPaid !== false &&
+        !refundTxsOnDate.some((t) => t.referenceNumber === sr.returnNumber || t.returnId === sr.returnNumber || t.referenceId === sr.id)
+      );
+
+    const todaySalesReturnCashRefunds = Number(
+      (
+        refundTxsOnDate.reduce((s, t) => s + t.amount, 0) +
+        unreconciledOnDate.reduce((s, sr) => s + sr.totalRefundAmount, 0)
+      ).toFixed(2)
+    );
+
+    // Other cash inflows / outflows
+    const otherCashInflows = Number(
+      cashDrawerTransactions
+        .filter((t) => (isAll || t.date.startsWith(dateStr)) && t.direction === 'IN' && t.type !== 'CASH_SALE' && t.type !== 'CUSTOMER_COLLECTION')
+        .reduce((s, t) => s + t.amount, 0)
+        .toFixed(2)
+    );
+
+    const otherCashOutflows = Number(
+      cashDrawerTransactions
+        .filter((t) => (isAll || t.date.startsWith(dateStr)) && t.direction === 'OUT' && t.type !== 'SALES_RETURN_REFUND' && t.type !== 'EXPENSE_PAYMENT' && t.type !== 'SUPPLIER_PAYMENT')
+        .reduce((s, t) => s + t.amount, 0)
+        .toFixed(2)
+    );
+
+    // Opening Cash
+    const openingCash = Number((settings.cashDrawerOpeningBalance || 0).toFixed(2));
+
+    const totalCashInflows = Number((totalSalesCash + todayCustomerDuesCollected + otherCashInflows).toFixed(2));
+    const totalCashOutflows = Number(
+      (todaySalesReturnCashRefunds + todayExpensesCash + todaySupplierPayoutsCash + otherCashOutflows).toFixed(2)
+    );
+
+    const expectedCashInDrawer = Number((openingCash + totalCashInflows - totalCashOutflows).toFixed(2));
+
+    return {
+      openingCash,
       totalSalesCash,
       totalSalesUPI,
       totalSalesCard,
+      totalSalesTerminal,
       totalSalesCredit,
       totalGrossSales,
-      totalCustomerDuesCollected: todayCustomerDuesCollected,
-      totalExpensesPaid: todayExpensesCash,
-      totalSupplierPayouts: todaySupplierPayoutsCash,
+      todayCustomerDuesCollected,
+      todaySalesReturnCashRefunds,
+      todayExpensesCash,
+      todaySupplierPayoutsCash,
+      otherCashInflows,
+      otherCashOutflows,
+      totalCashInflows,
+      totalCashOutflows,
       expectedCashInDrawer,
+      cashRefundTransactions: refundTxsOnDate,
+      unreconciledReturns: unreconciledOnDate,
+    };
+  };
+
+  const updateSalesReturnRefundStatus = (returnId: string, isPaid: boolean) => {
+    setSalesReturns((prev) =>
+      prev.map((sr) => {
+        if (sr.id === returnId || sr.returnNumber === returnId) {
+          return { ...sr, isCashRefundPaid: isPaid };
+        }
+        return sr;
+      })
+    );
+
+    if (!isPaid) {
+      setCashDrawerTransactions((prev) =>
+        prev.filter(
+          (t) =>
+            t.returnId !== returnId &&
+            t.referenceNumber !== returnId &&
+            t.referenceId !== returnId
+        )
+      );
+      setPayments((prev) =>
+        prev.filter(
+          (p) =>
+            p.referenceNumber !== returnId &&
+            p.id !== `pay-rec-${returnId}` &&
+            p.id !== `pay-sr-${returnId}`
+        )
+      );
+      logAudit(
+        'UPDATE',
+        'Sales Return Refund Review',
+        `Return ${returnId} marked as UNPAID. Associated cash drawer OUT deductions removed.`
+      );
+    } else {
+      reconcileCashDrawerReturns();
+    }
+  };
+
+  // Day End Closing Register
+  const recordDayClosing = (
+    actualCash: number,
+    notes?: string,
+    customDate?: string
+  ): DayClosingRecord => {
+    const targetDate = customDate || new Date().toISOString().substring(0, 10);
+    const summary = getCashDrawerSummary(targetDate);
+    const discrepancyAmount = actualCash - summary.expectedCashInDrawer;
+
+    const closingRecord: DayClosingRecord = {
+      id: `close-${Date.now()}`,
+      date: targetDate,
+      closedAt: new Date().toLocaleTimeString(),
+      closedBy: currentUser.name,
+      openingCash: summary.openingCash,
+      totalSalesCash: summary.totalSalesCash,
+      totalSalesUPI: summary.totalSalesUPI,
+      totalSalesCard: summary.totalSalesCard,
+      totalSalesCredit: summary.totalSalesCredit,
+      totalGrossSales: summary.totalGrossSales,
+      totalCustomerDuesCollected: summary.todayCustomerDuesCollected,
+      totalCashRefunds: summary.todaySalesReturnCashRefunds,
+      totalExpensesPaid: summary.todayExpensesCash,
+      totalSupplierPayouts: summary.todaySupplierPayoutsCash,
+      expectedCashInDrawer: summary.expectedCashInDrawer,
       actualCashInDrawer: actualCash,
       discrepancyAmount,
       notes,
     };
 
     setDayClosingRecords((prev) => [closingRecord, ...prev]);
-    logAudit('BACKUP', 'Day Closing Register', `Closed shift with Expected Cash: ₹${expectedCashInDrawer.toFixed(2)}, Actual: ₹${actualCash.toFixed(2)}, Diff: ₹${discrepancyAmount.toFixed(2)}`);
+    logAudit(
+      'BACKUP',
+      'Day Closing Register',
+      `Closed shift for ${targetDate}: Expected Cash ₹${summary.expectedCashInDrawer.toFixed(2)} (Cash Sales: ₹${summary.totalSalesCash.toFixed(2)}, Refunds: -₹${summary.todaySalesReturnCashRefunds.toFixed(2)}), Actual ₹${actualCash.toFixed(2)}, Diff ₹${discrepancyAmount.toFixed(2)}`
+    );
     return closingRecord;
   };
 
@@ -1344,6 +1978,88 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     return memberships.find((m) => m.id === id || m.membershipId === id);
   };
 
+  const createPendingMembership = (
+    data: Omit<PendingMembershipRegistration, 'id' | 'memberId' | 'status' | 'createdAt'>
+  ): PendingMembershipRegistration => {
+    const year = new Date().getFullYear();
+    const count = memberships.length + pendingMemberships.filter((p) => !p.isRenewal).length + 1;
+    const memberId = data.isRenewal && data.renewingMembershipId
+      ? data.renewingMembershipId
+      : `${membershipSettings.idPrefix || 'MEM'}-${year}-${String(membershipSettings.nextNumber + pendingMemberships.filter((p) => !p.isRenewal).length).padStart(4, '0')}`;
+
+    const newPending: PendingMembershipRegistration = {
+      ...data,
+      id: `reg-mem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      memberId,
+      status: 'PENDING',
+      createdAt: new Date().toISOString(),
+    };
+
+    setPendingMemberships((prev) => [newPending, ...prev]);
+    logAudit(
+      'CREATE',
+      'Membership Module',
+      `Created pending membership registration ${memberId} for ${data.customerName} (${data.durationLabel}, ₹${data.fee})`
+    );
+    return newPending;
+  };
+
+  const cancelPendingMembership = (registrationId: string) => {
+    setPendingMemberships((prev) =>
+      prev.map((p) => (p.id === registrationId ? { ...p, status: 'CANCELLED' } : p))
+    );
+  };
+
+  const addMembershipToCartAndNavigate = (pendingReg: PendingMembershipRegistration) => {
+    const cartItem: InvoiceItem = {
+      id: `item-mem-${Date.now()}`,
+      medicineId: 'SERVICE_MEMBERSHIP',
+      medicineName: `Customer Membership — ${pendingReg.planName}`,
+      genericName: `${pendingReg.durationLabel} | Member ID: ${pendingReg.memberId} | ${pendingReg.customerName} (${pendingReg.customerPhone})`,
+      batchId: `BATCH-MEM-${pendingReg.memberId}`,
+      batchNumber: pendingReg.memberId,
+      expiryDate: pendingReg.expiryDate,
+      hsnCode: '998319',
+      quantity: 1,
+      unit: 'SERVICE',
+      unitType: 'STRIP',
+      unitsPerPack: 1,
+      rate: pendingReg.fee,
+      mrp: pendingReg.fee,
+      discountPercent: 0,
+      discountAmount: 0,
+      gstRate: 0,
+      cgstAmount: 0,
+      sgstAmount: 0,
+      igstAmount: 0,
+      totalAmount: pendingReg.fee,
+      costRate: 0,
+      isMemberDiscountEligible: false,
+      itemCategory: 'MEMBERSHIP',
+      membershipDetails: {
+        registrationId: pendingReg.id,
+        memberId: pendingReg.memberId,
+        planName: pendingReg.planName,
+        durationMonths: pendingReg.durationMonths,
+        durationLabel: pendingReg.durationLabel,
+        customerName: pendingReg.customerName,
+        customerPhone: pendingReg.customerPhone,
+        customerEmail: pendingReg.customerEmail,
+        customerAddress: pendingReg.customerAddress,
+        startDate: pendingReg.startDate,
+        expiryDate: pendingReg.expiryDate,
+        fee: pendingReg.fee,
+        paymentMode: pendingReg.paymentMode,
+        isRenewal: pendingReg.isRenewal,
+        renewingMembershipId: pendingReg.renewingMembershipId,
+        notes: pendingReg.notes,
+      },
+    };
+
+    setPendingMembershipCartItem(cartItem);
+    setActiveTab('pos');
+  };
+
   const toggleMedicineMembershipDiscount = (medicineId: string) => {
     setMedicines((prev) =>
       prev.map((m) => {
@@ -1377,11 +2093,12 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     setSuppliers(INITIAL_SUPPLIERS);
     setInvoices(INITIAL_INVOICES);
     setHeldBills([]);
-    setSalesReturns([]);
+    setSalesReturns(INITIAL_SALES_RETURNS);
     setPurchases(INITIAL_PURCHASES);
     setPurchaseReturns([]);
     setExpenses(INITIAL_EXPENSES);
     setPayments([]);
+    setCashDrawerTransactions(INITIAL_CASH_DRAWER_TRANSACTIONS);
     setDayClosingRecords([]);
     setDamagedStock([]);
     setUsers(INITIAL_USERS);
@@ -1405,6 +2122,7 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       if (parsed.purchaseReturns) setPurchaseReturns(parsed.purchaseReturns);
       if (parsed.expenses) setExpenses(parsed.expenses);
       if (parsed.payments) setPayments(parsed.payments);
+      if (parsed.cashDrawerTransactions) setCashDrawerTransactions(parsed.cashDrawerTransactions);
       if (parsed.dayClosingRecords) setDayClosingRecords(parsed.dayClosingRecords);
       if (parsed.damagedStock) setDamagedStock(parsed.damagedStock);
       if (parsed.users) setUsers(parsed.users);
@@ -1419,20 +2137,381 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // ==========================================
+  // BARCODE & QR MAPPING LOGIC
+  // ==========================================
+  const addBarcodeMapping = (mappingData: Omit<BarcodeQRMapping, 'id' | 'mappedAt'>) => {
+    const code = mappingData.code.trim();
+    if (!code) return { success: false, error: 'Barcode or QR string cannot be empty.' };
+
+    // Duplicate check
+    const existing = barcodeMappings.find((m) => m.code.toLowerCase() === code.toLowerCase());
+    if (existing) {
+      return {
+        success: false,
+        error: `Code "${code}" is already mapped to ${existing.medicineName} (${existing.batchNumber || 'Default'}).`,
+      };
+    }
+
+    const newMapping: BarcodeQRMapping = {
+      ...mappingData,
+      id: `map-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      code,
+      mappedAt: new Date().toISOString().substring(0, 19).replace('T', ' '),
+    };
+
+    setBarcodeMappings((prev) => [newMapping, ...prev]);
+    logAudit(
+      'UPDATE',
+      'Barcode & QR Mapping',
+      `Mapped QR code "${code}" to medicine "${mappingData.medicineName}" (Unit: ${mappingData.unitType || 'STRIP'}).`
+    );
+    return { success: true, mapping: newMapping };
+  };
+
+  const removeBarcodeMapping = (id: string) => {
+    setBarcodeMappings((prev) => prev.filter((m) => m.id !== id));
+    logAudit('DELETE', 'Barcode & QR Mapping', `Removed barcode mapping ID: ${id}`);
+  };
+
+  const assignBarcodeToMedicine = (
+    medicineId: string,
+    rawBarcode: string,
+    unitType: 'STRIP' | 'LOOSE' = 'STRIP',
+    notes?: string
+  ): { success: boolean; error?: string; medicine?: Medicine } => {
+    const code = rawBarcode?.trim();
+    if (!code) return { success: false, error: 'Barcode or QR string cannot be empty.' };
+
+    const targetMed = medicines.find((m) => m.id === medicineId);
+    if (!targetMed) return { success: false, error: 'Target medicine not found in inventory.' };
+
+    // 1. Update medicine master barcode and primary batch barcode
+    setMedicines((prev) =>
+      prev.map((m) => {
+        if (m.id !== medicineId) return m;
+        const updatedBatches = m.batches.map((b, idx) =>
+          idx === 0 ? { ...b, barcode: code } : b
+        );
+        return {
+          ...m,
+          barcode: code,
+          batches: updatedBatches,
+        };
+      })
+    );
+
+    // 2. Overwrite or register in barcodeMappings
+    setBarcodeMappings((prev) => {
+      const filtered = prev.filter((item) => item.code.toLowerCase() !== code.toLowerCase());
+      const newMap: BarcodeQRMapping = {
+        id: `map-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        code,
+        medicineId: targetMed.id,
+        medicineName: targetMed.name,
+        unitType,
+        packSize: targetMed.packSize,
+        notes: notes || 'Manufacturer packaging barcode',
+        mappedAt: new Date().toISOString().substring(0, 19).replace('T', ' '),
+      };
+      return [newMap, ...filtered];
+    });
+
+    if (pendingScannedBarcode === code) {
+      setPendingScannedBarcode(null);
+    }
+
+    logAudit(
+      'UPDATE',
+      'Barcode & QR Mapping',
+      `Assigned manufacturer packaging barcode "${code}" to medicine "${targetMed.name}" (${unitType}).`
+    );
+
+    return { success: true, medicine: { ...targetMed, barcode: code } };
+  };
+
+  const findMedicineByBarcodeOrQR = (rawCode: string) => {
+    if (!rawCode) return null;
+    const code = rawCode.trim();
+
+    // 1. Check custom barcodeMappings (exact match)
+    const customMap = barcodeMappings.find((m) => m.code === code);
+    if (customMap) {
+      const med = medicines.find((m) => m.id === customMap.medicineId);
+      if (med) {
+        const batch = customMap.batchNumber
+          ? med.batches.find((b) => b.batchNumber === customMap.batchNumber) || med.batches[0]
+          : med.batches[0];
+        return { medicine: med, batch, unitType: customMap.unitType || 'STRIP' };
+      }
+    }
+
+    // 2. Check medicine batches for direct barcode match
+    for (const med of medicines) {
+      for (const b of med.batches) {
+        if (b.barcode === code || b.batchNumber.toLowerCase() === code.toLowerCase()) {
+          return { medicine: med, batch: b, unitType: 'STRIP' as const };
+        }
+      }
+    }
+
+    // 3. Check medicine master barcode or id
+    const medByCode = medicines.find((m) => m.barcode === code || m.id === code);
+    if (medByCode) {
+      const availableBatches = medByCode.batches
+        .filter((b) => b.availableQuantity > 0)
+        .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
+      const selectedBatch = availableBatches[0] || medByCode.batches[0];
+      return { medicine: medByCode, batch: selectedBatch, unitType: 'STRIP' as const };
+    }
+
+    // 4. GS1 DataMatrix matching (e.g. 0108901234001018...)
+    const gtinMatch = code.match(/01(\d{14})/);
+    if (gtinMatch) {
+      const gtin = gtinMatch[1];
+      for (const med of medicines) {
+        for (const b of med.batches) {
+          if (b.barcode && gtin.endsWith(b.barcode)) {
+            return { medicine: med, batch: b, unitType: 'STRIP' as const };
+          }
+        }
+      }
+    }
+
+    return null;
+  };
+
+  // ==========================================
+  // WIRELESS PHONE SCANNER INTEGRATION
+  // ==========================================
+  const connectScannerSSE = (sessionId: string, token: string) => {
+    if (typeof window === 'undefined') return;
+
+    if (sseRef.current) {
+      sseRef.current.close();
+      sseRef.current = null;
+    }
+
+    try {
+      const es = new EventSource(`/api/scanner/events?sessionId=${sessionId}&token=${token}`);
+      sseRef.current = es;
+
+      es.addEventListener('INIT', (e: MessageEvent) => {
+        try {
+          const initData = JSON.parse(e.data);
+          if (initData.connectedDevice) {
+            setPhoneScannerStatus('CONNECTED');
+            setPhoneScannerSession((prev) =>
+              prev ? { ...prev, connectedDevice: initData.connectedDevice, status: 'CONNECTED' } : null
+            );
+          }
+        } catch {}
+      });
+
+      es.addEventListener('DEVICE_CONNECTED', (e: MessageEvent) => {
+        try {
+          const dev = JSON.parse(e.data);
+          setPhoneScannerStatus('CONNECTED');
+          setPhoneScannerSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: 'CONNECTED',
+                  connectedDevice: { name: dev.deviceName, connectedAt: dev.connectedAt },
+                }
+              : null
+          );
+          logAudit('UPDATE', 'Phone QR Scanner', `Wireless Phone Scanner paired: ${dev.deviceName}`);
+        } catch {}
+      });
+
+      es.addEventListener('DEVICE_DISCONNECTED', () => {
+        setPhoneScannerStatus('WAITING');
+        setPhoneScannerSession((prev) =>
+          prev ? { ...prev, status: 'WAITING', connectedDevice: undefined } : null
+        );
+        logAudit('UPDATE', 'Phone QR Scanner', 'Phone disconnected from scanner session.');
+      });
+
+      es.addEventListener('SCAN_RECEIVED', (e: MessageEvent) => {
+        try {
+          const scan = JSON.parse(e.data);
+          handleIncomingScan(scan.value);
+        } catch (err) {
+          console.error('Failed to parse scan payload:', err);
+        }
+      });
+
+      es.onerror = () => {
+        // EventSource will auto-reconnect
+      };
+    } catch (err) {
+      console.error('SSE connect error:', err);
+    }
+  };
+
+  const startPhoneScannerSession = async (customHost?: string): Promise<PhoneScannerSessionState | null> => {
+    try {
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+
+      const res = await fetch('/api/scanner/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activeWorkflow: activeTab }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to start phone scanner session');
+      }
+
+      const sessionState: PhoneScannerSessionState = {
+        sessionId: data.sessionId,
+        pairingToken: data.pairingToken,
+        pairingPin: data.pairingPin,
+        expiresAt: data.expiresAt,
+        status: 'WAITING',
+      };
+
+      setPhoneScannerSession(sessionState);
+      setPhoneScannerStatus('WAITING');
+
+      connectScannerSSE(data.sessionId, data.pairingToken);
+      return sessionState;
+    } catch (err: any) {
+      console.error('Failed to start scanner session:', err);
+      logAudit('UPDATE', 'Phone QR Scanner', `Failed to create session: ${err.message}`);
+      return null;
+    }
+  };
+
+  const disconnectPhoneScanner = async () => {
+    if (sseRef.current) {
+      sseRef.current.close();
+      sseRef.current = null;
+    }
+    if (phoneScannerSession) {
+      try {
+        await fetch(`/api/scanner/session?sessionId=${phoneScannerSession.sessionId}`, {
+          method: 'DELETE',
+        });
+      } catch {
+        // ignore
+      }
+    }
+    setPhoneScannerSession(null);
+    setPhoneScannerStatus('DISCONNECTED');
+    logAudit('UPDATE', 'Phone QR Scanner', 'Disconnected wireless phone scanner.');
+  };
+
+  // Sync active workflow to server when activeTab changes
+  useEffect(() => {
+    if (phoneScannerSession?.sessionId) {
+      fetch('/api/scanner/session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: phoneScannerSession.sessionId,
+          activeWorkflow: activeTab,
+        }),
+      }).catch(() => {});
+    }
+  }, [activeTab, phoneScannerSession?.sessionId]);
+
+  const handleIncomingScan = (rawCode: string) => {
+    if (!rawCode) return;
+    const code = rawCode.trim();
+
+    if (activeTab === 'pos') {
+      const match = findMedicineByBarcodeOrQR(code);
+      if (match) {
+        setLastScannedItem({
+          value: code,
+          timestamp: Date.now(),
+          medicineName: match.medicine.name,
+          status: 'MATCHED',
+          unitType: match.unitType,
+        });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('pharmacy:phone_scan', {
+              detail: { code, match },
+            })
+          );
+        }
+        logAudit(
+          'SALE',
+          'Phone QR Scanner',
+          `Scanned and matched medicine "${match.medicine.name}" (Code: ${code}) into POS bill.`
+        );
+      } else {
+        setPendingScannedBarcode(code);
+        setLastScannedItem({
+          value: code,
+          timestamp: Date.now(),
+          status: 'UNKNOWN',
+        });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('pharmacy:phone_scan', {
+              detail: { code, match: null },
+            })
+          );
+        }
+        logAudit(
+          'UPDATE',
+          'Phone QR Scanner',
+          `Unknown QR / Barcode scanned: "${code}". Prompting user to link to existing medicine.`
+        );
+      }
+    } else if (activeTab === 'medicines') {
+      setPendingScannedBarcode(code);
+      setLastScannedItem({
+        value: code,
+        timestamp: Date.now(),
+        status: 'MATCHED',
+      });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('pharmacy:phone_scan_master', {
+            detail: { code },
+          })
+        );
+      }
+      logAudit(
+        'UPDATE',
+        'Medicine Master',
+        `Scanned QR code "${code}" transferred to Medicine Master barcode field.`
+      );
+    } else {
+      setLastScannedItem({
+        value: code,
+        timestamp: Date.now(),
+        status: 'IGNORED_WORKFLOW',
+      });
+      logAudit(
+        'UPDATE',
+        'Phone QR Scanner',
+        `Scanned code "${code}" ignored because active screen is "${activeTab}".`
+      );
+    }
+  };
+
   const exportDataBackup = (): string => {
     const exportObject = {
-      version: '2.0-OPERATIONAL',
+      version: '3.0.0',
       exportedAt: new Date().toISOString(),
       medicines,
       customers,
       suppliers,
       invoices,
-      heldBills,
-      salesReturns,
       purchases,
       purchaseReturns,
       expenses,
       payments,
+      cashDrawerTransactions,
       dayClosingRecords,
       damagedStock,
       users,
@@ -1440,6 +2519,7 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       memberships,
       membershipSettings,
       auditLogs,
+      barcodeMappings,
     };
     logAudit('BACKUP', 'System Recovery', 'Generated and downloaded full system JSON backup archive');
     return JSON.stringify(exportObject, null, 2);
@@ -1458,6 +2538,7 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         purchaseReturns,
         expenses,
         payments,
+        cashDrawerTransactions,
         dayClosingRecords,
         damagedStock,
         currentUser,
@@ -1493,6 +2574,12 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         getMemberById,
         toggleMedicineMembershipDiscount,
         setMedicineMembershipDiscountBulk,
+        pendingMemberships,
+        pendingMembershipCartItem,
+        setPendingMembershipCartItem,
+        createPendingMembership,
+        cancelPendingMembership,
+        addMembershipToCartAndNavigate,
         addMedicine,
         updateMedicine,
         deleteMedicine,
@@ -1517,12 +2604,34 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         addExpense,
         deleteExpense,
         recordPayment,
+        recordCashDrawerTransaction,
+        getCashDrawerSummary,
+        reconcileCashDrawerReturns,
+        updateSalesReturnRefundStatus,
         recordDayClosing,
         markNotificationAsRead,
         markAllNotificationsAsRead,
         logAudit,
         getAIReorderRecommendations,
         getAINearExpiryStrategies,
+        // Barcode & QR Mapping
+        barcodeMappings,
+        addBarcodeMapping,
+        removeBarcodeMapping,
+        assignBarcodeToMedicine,
+        findMedicineByBarcodeOrQR,
+
+        // Phone QR Scanner
+        phoneScannerSession,
+        phoneScannerStatus,
+        lastScannedItem,
+        pendingScannedBarcode,
+        setPendingScannedBarcode,
+        startPhoneScannerSession,
+        disconnectPhoneScanner,
+        isPhoneScannerModalOpen,
+        setIsPhoneScannerModalOpen,
+
         resetToDemoData,
         importDataBackup,
         exportDataBackup,

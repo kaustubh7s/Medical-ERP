@@ -201,43 +201,69 @@ export const SalesReturnView: React.FC = () => {
               <div className="space-y-3">
                 {selectedInvoice.items.map((item) => {
                   const config = returnItems[item.id] || { qty: 0, reason: 'PATIENT_RECOVERED' };
+
+                  // Calculate already returned quantities on this invoice to prevent returning more than billed
+                  const alreadyReturnedQty = salesReturns
+                    .filter((sr) => sr.originalInvoiceId === selectedInvoice.id || sr.originalInvoiceNumber === selectedInvoice.invoiceNumber)
+                    .flatMap((sr) => sr.items)
+                    .filter((ri) => ri.invoiceItemId === item.id || (ri.medicineId === item.medicineId && ri.batchNumber === item.batchNumber))
+                    .reduce((sum, ri) => sum + ri.returnQuantity, 0);
+
+                  const maxReturnable = Math.max(0, item.quantity - alreadyReturnedQty);
+                  const isFullyReturned = maxReturnable === 0;
+
                   return (
                     <div
                       key={item.id}
-                      className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+                      className={`p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+                        isFullyReturned
+                          ? 'border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-800/20 opacity-60'
+                          : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40'
+                      }`}
                     >
                       <div>
-                        <p className="font-bold text-xs text-slate-900 dark:text-slate-100">{item.medicineName}</p>
-                        <p className="text-[10px] text-slate-400 font-mono">
-                          Batch: {item.batchNumber} • Billed Qty: {item.quantity} • Rate: ₹{item.rate.toFixed(2)}
+                        <div className="flex items-center gap-2">
+                          <p className="font-bold text-xs text-slate-900 dark:text-slate-100">{item.medicineName}</p>
+                          {isFullyReturned && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                              Fully Returned
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          Batch: {item.batchNumber} • Billed Qty: {item.quantity} {alreadyReturnedQty > 0 ? `(${alreadyReturnedQty} previously returned)` : ''} • Rate: ₹{item.rate.toFixed(2)}
                         </p>
                       </div>
 
                       <div className="flex items-center gap-3 w-full sm:w-auto">
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 block mb-0.5">Return Qty</label>
+                          <label className="text-[10px] font-bold text-slate-400 block mb-0.5">
+                            Return Qty {maxReturnable > 0 ? `(Max: ${maxReturnable})` : ''}
+                          </label>
                           <input
                             type="number"
                             min={0}
-                            max={item.quantity}
+                            max={maxReturnable}
+                            disabled={isFullyReturned}
                             value={config.qty}
-                            onChange={(e) => handleQtyChange(item.id, Number(e.target.value), item.quantity)}
-                            className="w-20 px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-center"
+                            onChange={(e) => handleQtyChange(item.id, Number(e.target.value), maxReturnable)}
+                            className="w-24 px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-center disabled:opacity-40"
                           />
                         </div>
 
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 block mb-0.5">Reason</label>
+                          <label className="text-[10px] font-bold text-slate-400 block mb-0.5">Condition / Reason</label>
                           <select
                             value={config.reason}
+                            disabled={isFullyReturned}
                             onChange={(e) => handleReasonChange(item.id, e.target.value as SalesReturnItem['reason'])}
-                            className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold"
+                            className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold disabled:opacity-40"
                           >
-                            <option value="PATIENT_RECOVERED">Patient Recovered</option>
-                            <option value="EXPIRED">Expired Medicine</option>
-                            <option value="DAMAGED">Damaged / Broken</option>
-                            <option value="WRONG_MEDICINE">Wrong Medicine Dispensed</option>
-                            <option value="OTHER">Other Reason</option>
+                            <option value="PATIENT_RECOVERED">Patient Recovered (Restock)</option>
+                            <option value="WRONG_MEDICINE">Wrong Medicine (Restock)</option>
+                            <option value="DAMAGED">Damaged / Broken (Quarantine)</option>
+                            <option value="EXPIRED">Expired Medicine (Quarantine)</option>
+                            <option value="OTHER">Other Reason (Restock)</option>
                           </select>
                         </div>
                       </div>
@@ -255,10 +281,27 @@ export const SalesReturnView: React.FC = () => {
                     onChange={(e) => setRefundMode(e.target.value as typeof refundMode)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold"
                   >
-                    <option value="CASH">Cash Refund at Counter</option>
-                    <option value="CREDIT_NOTE">Issue Credit Note / Due Deduction</option>
-                    <option value="BANK_TRANSFER">Bank Transfer / UPI Refund</option>
+                    <option value="CASH">Cash Refund at Counter (Deducts from Cash Drawer)</option>
+                    <option value="CREDIT_NOTE">Issue Credit Note / Due Deduction (No Cash Payout)</option>
+                    <option value="BANK_TRANSFER">Bank Transfer / UPI Refund (Digital Settlement)</option>
                   </select>
+                  <p className="text-[11px] font-medium mt-1">
+                    {refundMode === 'CASH' && (
+                      <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                        ✓ Deducts cash from system cash drawer balance immediately.
+                      </span>
+                    )}
+                    {refundMode === 'CREDIT_NOTE' && (
+                      <span className="text-purple-700 dark:text-purple-400 font-bold">
+                        ✓ Deducts patient ledger dues; no cash paid out.
+                      </span>
+                    )}
+                    {refundMode === 'BANK_TRANSFER' && (
+                      <span className="text-blue-700 dark:text-blue-400 font-bold">
+                        ✓ Bank/UPI digital payout; does not affect physical drawer cash.
+                      </span>
+                    )}
+                  </p>
                 </div>
 
                 <div>
@@ -286,7 +329,7 @@ export const SalesReturnView: React.FC = () => {
                   disabled={itemsToReturn.length === 0}
                   className="px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-600/20 disabled:opacity-40 transition-all"
                 >
-                  Confirm Return & Restock Stock
+                  Confirm Return & Settle Refund
                 </button>
               </div>
             </div>
@@ -303,30 +346,59 @@ export const SalesReturnView: React.FC = () => {
       {/* Return History Table */}
       {salesReturns.length > 0 && (
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden p-5 space-y-3">
-          <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
-            Recent Sales Returns History ({salesReturns.length})
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
+              Recent Sales Returns History ({salesReturns.length})
+            </h3>
+            <span className="text-xs font-mono font-bold text-slate-500">
+              Total Cash Refunded: ₹{salesReturns.filter((s) => s.refundMode === 'CASH').reduce((sum, s) => sum + s.totalRefundAmount, 0).toFixed(2)}
+            </span>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-800 font-bold text-slate-400 uppercase text-[10px]">
                   <th className="p-2.5">Return #</th>
+                  <th className="p-2.5">Date & Time</th>
                   <th className="p-2.5">Original Invoice</th>
                   <th className="p-2.5">Customer</th>
                   <th className="p-2.5">Items Returned</th>
                   <th className="p-2.5 text-right">Refund (₹)</th>
-                  <th className="p-2.5 text-center">Settlement</th>
+                  <th className="p-2.5 text-center">Settlement Mode</th>
+                  <th className="p-2.5 text-center">Cash Drawer Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                 {salesReturns.map((sr) => (
                   <tr key={sr.id}>
                     <td className="p-2.5 font-mono font-bold text-slate-900 dark:text-slate-100">{sr.returnNumber}</td>
-                    <td className="p-2.5 font-mono text-slate-600">{sr.originalInvoiceNumber}</td>
+                    <td className="p-2.5 font-mono text-slate-500 text-[11px]">{sr.returnDate}</td>
+                    <td className="p-2.5 font-mono text-slate-600 font-semibold">{sr.originalInvoiceNumber}</td>
                     <td className="p-2.5 font-semibold text-slate-900 dark:text-slate-100">{sr.customerName}</td>
-                    <td className="p-2.5 text-slate-500">{sr.items.map((i) => `${i.medicineName} (${i.returnQuantity})`).join(', ')}</td>
+                    <td className="p-2.5 text-slate-600 dark:text-slate-300">
+                      {sr.items.map((i) => `${i.medicineName} (x${i.returnQuantity})`).join(', ')}
+                    </td>
                     <td className="p-2.5 text-right font-mono font-bold text-rose-600">₹{sr.totalRefundAmount.toFixed(2)}</td>
-                    <td className="p-2.5 text-center font-semibold text-[10px] text-slate-600">{sr.refundMode}</td>
+                    <td className="p-2.5 text-center font-semibold text-[10px]">
+                      <span className={`px-2 py-0.5 rounded ${
+                        sr.refundMode === 'CASH'
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                          : sr.refundMode === 'CREDIT_NOTE'
+                          ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
+                          : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                      }`}>
+                        {sr.refundMode}
+                      </span>
+                    </td>
+                    <td className="p-2.5 text-center font-mono text-[10px]">
+                      {sr.refundMode === 'CASH' ? (
+                        <span className="font-bold text-rose-600 dark:text-rose-400">
+                          -₹{sr.totalRefundAmount.toFixed(2)} Drawer OUT
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">No Cash Payout</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
