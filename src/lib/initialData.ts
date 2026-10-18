@@ -34,7 +34,7 @@ export const INITIAL_SETTINGS: PharmacySettings = {
   posTerminalBaseUrl: 'http://localhost:3001',
   posTerminalDeviceId: 'PINELABS-POS-M884',
   posTerminalMerchantName: 'CarePlus Pharmacy & Wellness',
-  posTerminalToken: 'pos_live_ebce2ddbdd0f8120c30dd915ee783942043b0d74b3357e56',
+  posTerminalToken: 'pos_live_a835119957a4d1dad3bd47ebec98bad50494f51ee05a4292',
   posTerminalIsPaired: true,
   cashDrawerOpeningBalance: 5000,
 };

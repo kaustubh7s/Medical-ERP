@@ -17,13 +17,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await submitPaymentRequest({
-      requestId,
-      amount,
-      currency: currency || 'INR',
-      invoiceReference,
-      paymentMethod: paymentMethod || 'CUSTOMER_CHOICE',
-    });
+    const token = body.token || req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+
+    const result = await submitPaymentRequest(
+      {
+        requestId,
+        amount,
+        currency: currency || 'INR',
+        invoiceReference,
+        paymentMethod: paymentMethod || 'CUSTOMER_CHOICE',
+      },
+      token ? { token } : undefined
+    );
 
     if (!result.success) {
       return NextResponse.json(result, { status: 400 });

@@ -117,6 +117,7 @@ export const POSBillingView: React.FC = () => {
     setPendingMembershipCartItem,
     cancelPendingMembership,
     setActiveTab,
+    updateSettings,
   } = usePharmacy();
 
   // Search & Input state
@@ -1462,6 +1463,7 @@ export const POSBillingView: React.FC = () => {
           currency: 'INR',
           invoiceReference: invNumber,
           paymentMethod: 'CUSTOMER_CHOICE',
+          token: settings.posTerminalToken,
         }),
       });
 
@@ -3183,7 +3185,55 @@ export const POSBillingView: React.FC = () => {
                       <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
                       <span>Terminal Notice: {terminalPaymentState}</span>
                     </div>
-                    {terminalErrorMsg && <p className="text-[11px] text-slate-300 pl-5">{terminalErrorMsg}</p>}
+                    {terminalErrorMsg && (
+                      <div className="space-y-2">
+                        <p className="text-[11px] text-slate-300 pl-5">{terminalErrorMsg}</p>
+                        {(terminalErrorMsg.toLowerCase().includes('token') ||
+                          terminalErrorMsg.toLowerCase().includes('unauthorized')) && (
+                          <div className="pl-5 pt-1">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setIsTerminalActionLoading(true);
+                                setTerminalErrorMsg(null);
+                                try {
+                                  const cRes = await fetch('/api/terminal/pair');
+                                  const cData = await cRes.json();
+                                  if (cData?.pairingCode) {
+                                    const pRes = await fetch('/api/terminal/pair', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        pairingCode: cData.pairingCode,
+                                        clientName: 'CarePlus-Pharmacy-Counter-1',
+                                      }),
+                                    });
+                                    const pData = await pRes.json();
+                                    if (pData?.token) {
+                                      updateSettings({
+                                        posTerminalToken: pData.token,
+                                        posTerminalIsPaired: true,
+                                      });
+                                      setTerminalPaymentState('IDLE');
+                                      await checkTerminalHealthStatus();
+                                    }
+                                  }
+                                } catch (e: any) {
+                                  setTerminalErrorMsg(`Auto-pair failed: ${e?.message || e}`);
+                                } finally {
+                                  setIsTerminalActionLoading(false);
+                                }
+                              }}
+                              disabled={isTerminalActionLoading}
+                              className="px-3 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
+                            >
+                              <RefreshCw className={`h-3 w-3 ${isTerminalActionLoading ? 'animate-spin' : ''}`} />
+                              <span>Auto-Fix & Re-Pair Terminal Now</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

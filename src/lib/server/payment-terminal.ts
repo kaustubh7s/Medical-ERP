@@ -5,6 +5,8 @@
  * Auth tokens and pairing secrets are managed server-side.
  */
 
+import fs from 'fs';
+import path from 'path';
 import {
   PosTerminalHealthResponse,
   TerminalPaymentRequestPayload,
@@ -18,10 +20,47 @@ export interface TerminalConfig {
   merchantName: string;
 }
 
+let activeTokenCache: string | null = null;
+
+export function getStoredToken(): string | null {
+  if (activeTokenCache) return activeTokenCache;
+  try {
+    const tokenFile = path.join(process.cwd(), 'data', 'terminal_token.json');
+    if (fs.existsSync(tokenFile)) {
+      const content = fs.readFileSync(tokenFile, 'utf-8');
+      const parsed = JSON.parse(content);
+      if (parsed.token) {
+        activeTokenCache = parsed.token;
+        return parsed.token;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export function saveStoredToken(token: string) {
+  activeTokenCache = token;
+  try {
+    const dir = path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const tokenFile = path.join(dir, 'terminal_token.json');
+    fs.writeFileSync(
+      tokenFile,
+      JSON.stringify({ token, updatedAt: new Date().toISOString() }, null, 2),
+      'utf-8'
+    );
+  } catch {}
+}
+
 export function getTerminalConfig(): TerminalConfig {
   return {
     baseUrl: process.env.POS_TERMINAL_API_BASE_URL || 'http://localhost:3001',
-    token: process.env.POS_TERMINAL_TOKEN || 'pos_live_ebce2ddbdd0f8120c30dd915ee783942043b0d74b3357e56',
+    token:
+      process.env.POS_TERMINAL_TOKEN ||
+      getStoredToken() ||
+      'pos_live_a835119957a4d1dad3bd47ebec98bad50494f51ee05a4292',
     deviceId: process.env.POS_TERMINAL_DEVICE_ID || 'PINELABS-POS-M884',
     merchantName: process.env.POS_TERMINAL_MERCHANT_NAME || 'CarePlus Pharmacy & Wellness',
   };
@@ -132,7 +171,30 @@ export async function pairTerminal(pairingCode: string, clientName?: string, cus
     throw new Error(data.error || data.message || `Pairing failed with status ${res.status}`);
   }
 
+  if (data.token) {
+    saveStoredToken(data.token);
+  }
+
   return data;
+}
+
+/**
+ * Automatically fetch pairing code from terminal and pair to obtain a valid Bearer token
+ */
+export async function autoPairWithTerminal(customConfig?: Partial<TerminalConfig>): Promise<string | null> {
+  try {
+    const codeData = await requestPairingCode(customConfig);
+    if (codeData && codeData.pairingCode) {
+      const pairData = await pairTerminal(codeData.pairingCode, 'CarePlus-Pharmacy-Counter-1', customConfig);
+      if (pairData && pairData.token) {
+        saveStoredToken(pairData.token);
+        return pairData.token;
+      }
+    }
+  } catch (err) {
+    console.warn('Auto-pair with terminal failed:', err);
+  }
+  return null;
 }
 
 /**
@@ -178,7 +240,39 @@ export async function submitPaymentRequest(
   const data = await res.json();
 
   if (!res.ok) {
-    const errorMsg = data.error || data.message || `Payment request rejected by terminal (HTTP ${res.status})`;
+    let errorMsg = data.error || data.message || `Payment request rejected by terminal (HTTP ${res.status})`;
+
+    // Auto-heal on expired/invalid Bearer token
+    if (res.status === 401 || (typeof errorMsg === 'string' && errorMsg.includes('Bearer token'))) {
+      const newToken = await autoPairWithTerminal(config);
+      if (newToken) {
+        headers['Authorization'] = `Bearer ${newToken}`;
+        const retryRes = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(cleanBody),
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000),
+        });
+        const retryData = await retryRes.json();
+        if (retryRes.ok && retryData.success) {
+          return {
+            success: true,
+            message: retryData.message,
+            transactionId: retryData.transactionId,
+            requestId: retryData.requestId,
+            invoiceReference: retryData.invoiceReference,
+            amount: retryData.amount,
+            currency: retryData.currency,
+            status: retryData.status || 'PAYMENT_REQUESTED',
+            isDemo: retryData.isDemo,
+          };
+        } else if (retryData.error) {
+          errorMsg = retryData.error;
+        }
+      }
+    }
+
     return {
       success: false,
       error: errorMsg,
@@ -342,6 +436,26 @@ export async function cancelPayment(
     });
 
     const data = await res.json();
+    if (!res.ok && res.status === 401) {
+      const newToken = await autoPairWithTerminal(config);
+      if (newToken) {
+        headers['Authorization'] = `Bearer ${newToken}`;
+        const retryRes = await fetch(cancelUrl, {
+          method: 'POST',
+          headers,
+          cache: 'no-store',
+          signal: AbortSignal.timeout(5000),
+        });
+        const retryData = await retryRes.json();
+        return {
+          success: retryRes.ok && retryData.success,
+          message: retryData.message,
+          status: retryData.status,
+          error: retryData.error,
+        };
+      }
+    }
+
     return {
       success: res.ok && data.success,
       message: data.message,

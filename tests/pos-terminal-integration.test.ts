@@ -10,14 +10,16 @@ import {
   getPaymentStatus,
   cancelPayment,
   verifyPaymentAuthoritatively,
+  getTerminalConfig,
 } from '../src/lib/server/payment-terminal';
 import { SalesInvoice, InvoiceItem } from '../src/types/pharmacy';
 
-const TEST_API_BASE = 'http://localhost:3001';
-const TEST_TOKEN = 'pos_live_ebce2ddbdd0f8120c30dd915ee783942043b0d74b3357e56';
+const TEST_API_BASE = process.env.POS_TERMINAL_API_BASE_URL || 'http://localhost:3001';
 const TEST_CONFIG = {
   baseUrl: TEST_API_BASE,
-  token: TEST_TOKEN,
+  get token() {
+    return process.env.POS_TERMINAL_TOKEN || getTerminalConfig().token;
+  },
   deviceId: 'PINELABS-POS-M884',
   merchantName: 'CarePlus Pharmacy & Wellness',
 };
