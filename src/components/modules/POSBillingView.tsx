@@ -288,7 +288,7 @@ export const POSBillingView: React.FC = () => {
           m.genericName.toLowerCase().includes(searchTerm.toLowerCase()) ||
           (m.barcode && m.barcode.includes(searchTerm))
       )
-    : (isDropdownOpen ? medicines.slice(0, 10) : []);
+    : (isDropdownOpen ? medicines.slice(0, 15) : []);
 
   // Currently previewed medicine in search dropdown
   const currentPreviewMed: Medicine | null =
@@ -816,13 +816,35 @@ export const POSBillingView: React.FC = () => {
     searchInputRef.current?.focus();
   };
 
+  // Helper to find the First-Expiry-First-Out (FEFO) available batch
+  const getFefoBatch = (med: Medicine): Batch | null => {
+    if (!med.batches || med.batches.length === 0) return null;
+    const available = med.batches.filter((b) => b.availableQuantity > 0);
+    if (available.length > 0) {
+      // Sort ascending by expiryDate (earliest expiry date first)
+      return [...available].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))[0];
+    }
+    // Fallback: earliest expiry batch overall
+    return [...med.batches].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))[0];
+  };
+
   const handleSelectMedicine = (med: Medicine) => {
     setSelectedMed(med);
-    setBatchHighlightedIndex(0);
-    if (med.batches.length === 1) {
-      addItemToCart(med, med.batches[0]);
-    } else {
+    const fefoBatch = getFefoBatch(med);
+    if (fefoBatch && fefoBatch.availableQuantity > 0) {
+      addItemToCart(med, fefoBatch);
+      setSearchTerm('');
+      setIsDropdownOpen(false);
+      setIsBatchModalOpen(false);
+      searchInputRef.current?.focus();
+    } else if (med.batches.length > 1) {
       setIsBatchModalOpen(true);
+    } else if (fefoBatch) {
+      addItemToCart(med, fefoBatch);
+      setSearchTerm('');
+      setIsDropdownOpen(false);
+      setIsBatchModalOpen(false);
+      searchInputRef.current?.focus();
     }
   };
 
@@ -2072,7 +2094,7 @@ export const POSBillingView: React.FC = () => {
               {/* Header: Clean Results Count */}
               <div className="bg-slate-50 dark:bg-slate-800/80 px-3.5 py-2 border-b border-slate-200 dark:border-slate-700/80 flex items-center justify-between text-[11px] font-bold text-slate-600 dark:text-slate-300">
                 <span>
-                  {searchTerm.trim() ? `Matching Medicines (${filteredMedicines.length})` : `Top Medicines (${filteredMedicines.length})`}
+                  Matching Medicines ({filteredMedicines.length})
                 </span>
                 <span className="text-[10px] text-slate-400 font-normal hidden sm:inline">
                   Use ↑ ↓ arrows &amp; Enter to pick
@@ -2084,7 +2106,8 @@ export const POSBillingView: React.FC = () => {
                 {filteredMedicines.map((med, idx) => {
                   const isHighlighted = idx === highlightedIndex;
                   const packCount = parseUnitsPerPack(med.packSize, med.dosageForm, med.unitsPerPack);
-                  const stripPrice = med.batches[0]?.saleRate || med.batches[0]?.mrp || 0;
+                  const fefoBatch = getFefoBatch(med) || med.batches[0];
+                  const stripPrice = fefoBatch?.saleRate || fefoBatch?.mrp || med.batches[0]?.saleRate || med.batches[0]?.mrp || 0;
                   const perTabPrice = getPerUnitRate(stripPrice, packCount);
                   const inStock = med.totalStock > 0;
 
