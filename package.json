@@ -11,7 +11,8 @@
     "test:scanner": "npx tsx tests/handheld-scanner-integration.test.ts",
     "test:terminal": "npx tsx tests/pos-terminal-integration.test.ts",
     "test:membership": "npx tsx tests/customer-membership-paid-billing.test.ts",
-    "test:returns": "npx tsx tests/sales-return-cash-drawer.test.ts"
+    "test:returns": "npx tsx tests/sales-return-cash-drawer.test.ts",
+    "test:generic-swap": "npx tsx tests/generic-salt-swap.test.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",

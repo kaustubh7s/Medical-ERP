@@ -139,6 +139,7 @@ export const POSBillingView: React.FC = () => {
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [batchHighlightedIndex, setBatchHighlightedIndex] = useState<number>(0);
   const [editingCartItemIndex, setEditingCartItemIndex] = useState<number | null>(null);
+  const [selectedSaltFilterMed, setSelectedSaltFilterMed] = useState<Medicine | null>(null);
 
   // Cart & Line Items
   const [cart, setCart] = useState<InvoiceItem[]>([]);
@@ -281,15 +282,63 @@ export const POSBillingView: React.FC = () => {
   const totalPatientsWithDue = customers.filter((c) => c.currentDue > 0).length;
   const totalKhataDueAmount = customers.reduce((sum, c) => sum + c.currentDue, 0);
 
-  // Instant search filter: matches by name, salt, or barcode, or shows top catalog medicines when opened
-  const filteredMedicines = searchTerm.trim()
-    ? medicines.filter(
+  // Helper to extract normalized active chemical salt keys for generic substitute matching
+  const extractCleanSaltKey = useCallback((genericName: string): string => {
+    if (!genericName) return '';
+    return genericName
+      .toLowerCase()
+      .replace(/\(.*?\)/g, '')
+      .replace(/\b(tablets?|capsules?|syrup|suspension|injection|cream|ointment|gel|inhaler|ip|bp|usp|sr|er|pr|cr)\b/gi, '')
+      .replace(/[0-9]+(\.[0-9]+)?\s*(mg|mcg|ml|iu|g|%|units|w\/v)\b/gi, '')
+      .replace(/[^a-z0-9\+]/gi, ' ')
+      .split('+')
+      .map((s) => s.trim().replace(/\s+/g, ' '))
+      .filter((s) => s.length > 2)
+      .sort()
+      .join(' + ');
+  }, []);
+
+  const areSaltsMatching = useCallback((generic1: string, generic2: string): boolean => {
+    if (!generic1 || !generic2) return false;
+    const key1 = extractCleanSaltKey(generic1);
+    const key2 = extractCleanSaltKey(generic2);
+    if (key1 && key2 && key1 === key2) return true;
+
+    const parts1 = key1.split(' + ');
+    const parts2 = key2.split(' + ');
+    if (parts1.length > 0 && parts2.length > 0) {
+      if (parts1.every((p) => parts2.includes(p)) || parts2.every((p) => parts1.includes(p))) {
+        return true;
+      }
+    }
+    return false;
+  }, [extractCleanSaltKey]);
+
+  // Instant search filter & 1-Click Generic Salt Substitute Swap
+  const filteredMedicines = useMemo(() => {
+    if (selectedSaltFilterMed) {
+      // Find matching generic salts, excluding the original medicine
+      const substitutes = medicines.filter(
         (m) =>
-          m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          m.genericName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          m.id !== selectedSaltFilterMed.id &&
+          areSaltsMatching(m.genericName, selectedSaltFilterMed.genericName)
+      );
+      // Sort in-stock items first
+      return substitutes.sort((a, b) => (b.totalStock > 0 ? 1 : 0) - (a.totalStock > 0 ? 1 : 0));
+    }
+
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase().trim();
+      return medicines.filter(
+        (m) =>
+          m.name.toLowerCase().includes(term) ||
+          m.genericName.toLowerCase().includes(term) ||
           (m.barcode && m.barcode.includes(searchTerm))
-      )
-    : (isDropdownOpen ? medicines.slice(0, 15) : []);
+      );
+    }
+
+    return isDropdownOpen ? medicines.slice(0, 15) : [];
+  }, [medicines, searchTerm, isDropdownOpen, selectedSaltFilterMed, areSaltsMatching]);
 
   // Currently previewed medicine in search dropdown
   const currentPreviewMed: Medicine | null =
@@ -303,16 +352,16 @@ export const POSBillingView: React.FC = () => {
         .filter(
           (m) =>
             m.id !== currentPreviewMed.id &&
-            (m.genericName.toLowerCase() === currentPreviewMed.genericName.toLowerCase() ||
+            (areSaltsMatching(m.genericName, currentPreviewMed.genericName) ||
               m.category.toLowerCase() === currentPreviewMed.category.toLowerCase())
         )
         .slice(0, 3)
     : [];
 
-  // Reset highlighted index on search term change
+  // Reset highlighted index on search term or salt filter change
   useEffect(() => {
     setHighlightedIndex(0);
-  }, [searchTerm]);
+  }, [searchTerm, selectedSaltFilterMed]);
 
   // Click outside to close dropdown
   useEffect(() => {
@@ -890,18 +939,49 @@ export const POSBillingView: React.FC = () => {
     const fefoBatch = getFefoBatch(med);
     if (fefoBatch && fefoBatch.availableQuantity > 0) {
       addItemToCart(med, fefoBatch);
+      if (selectedSaltFilterMed) {
+        setScanFeedback({
+          type: 'SUCCESS',
+          code: `SWAP: ${med.name}`,
+          medicineName: `${med.name} (Substituted for ${selectedSaltFilterMed.name})`,
+          batchNumber: fefoBatch.batchNumber,
+          expiryDate: fefoBatch.expiryDate,
+          rate: fefoBatch.saleRate || fefoBatch.mrp,
+        });
+        setSelectedSaltFilterMed(null);
+      }
       setSearchTerm('');
       setIsDropdownOpen(false);
       setIsBatchModalOpen(false);
       searchInputRef.current?.focus();
-    } else if (med.batches.length > 1) {
+    } else if (med.batches && med.batches.length > 1) {
       setIsBatchModalOpen(true);
     } else if (fefoBatch) {
       addItemToCart(med, fefoBatch);
+      if (selectedSaltFilterMed) {
+        setScanFeedback({
+          type: 'SUCCESS',
+          code: `SWAP: ${med.name}`,
+          medicineName: `${med.name} (Substituted for ${selectedSaltFilterMed.name})`,
+          batchNumber: fefoBatch.batchNumber,
+          expiryDate: fefoBatch.expiryDate,
+          rate: fefoBatch.saleRate || fefoBatch.mrp,
+        });
+        setSelectedSaltFilterMed(null);
+      }
       setSearchTerm('');
       setIsDropdownOpen(false);
       setIsBatchModalOpen(false);
       searchInputRef.current?.focus();
+    } else if (med.totalStock === 0) {
+      // If medicine is Out of Stock, automatically find and show in-stock alternatives
+      const alternatives = medicines.filter(
+        (m) => m.id !== med.id && m.totalStock > 0 && areSaltsMatching(m.genericName, med.genericName)
+      );
+      if (alternatives.length > 0) {
+        setSelectedSaltFilterMed(med);
+        setIsDropdownOpen(true);
+      }
     }
   };
 
@@ -2031,6 +2111,25 @@ export const POSBillingView: React.FC = () => {
       <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-xs w-full max-w-full">
         {/* Medicine / Barcode Input with Keyboard Arrow Support */}
         <div ref={searchContainerRef} className="relative w-full xl:flex-1 xl:min-w-[280px]">
+          {selectedSaltFilterMed && (
+            <div className="mb-1.5 flex items-center justify-between gap-1.5 px-2.5 py-1 rounded bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700/80 text-amber-900 dark:text-amber-200 text-xs font-semibold animate-in fade-in">
+              <span className="flex items-center gap-1.5 truncate">
+                <span className="w-4 h-4 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold text-[10px] shrink-0">⇄</span>
+                <span className="font-bold">Generic Swap:</span>
+                <span className="underline font-bold truncate max-w-[140px]">{selectedSaltFilterMed.name}</span>
+                <span className="text-[10px] text-amber-700 dark:text-amber-400 font-mono hidden sm:inline truncate max-w-[180px]">({selectedSaltFilterMed.genericName})</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedSaltFilterMed(null)}
+                className="text-amber-800 hover:text-black dark:text-amber-300 dark:hover:text-white font-bold px-1.5 py-0.5 rounded text-[11px] bg-white/70 dark:bg-slate-900/60 shadow-2xs cursor-pointer shrink-0"
+                title="Clear generic substitute filter"
+              >
+                ✕ Clear Filter
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-1.5">
             <Search className="h-4 w-4 text-emerald-600 dark:text-emerald-400 absolute left-3 top-2.5 pointer-events-none" />
             <input
@@ -2038,11 +2137,14 @@ export const POSBillingView: React.FC = () => {
               type="text"
               value={searchTerm}
               onFocus={() => {
-                if (searchTerm.trim().length > 0) setIsDropdownOpen(true);
+                if (searchTerm.trim().length > 0 || selectedSaltFilterMed) setIsDropdownOpen(true);
               }}
               onChange={(e) => {
                 const val = e.target.value;
                 setSearchTerm(val);
+                if (selectedSaltFilterMed) {
+                  setSelectedSaltFilterMed(null);
+                }
                 if (val.trim().length > 0) {
                   setIsDropdownOpen(true);
                 }
@@ -2103,7 +2205,7 @@ export const POSBillingView: React.FC = () => {
                   const term = searchTerm.trim();
 
                   // 1. First check if typed/scanned string is a barcode/QR match
-                  if (term) {
+                  if (term && !selectedSaltFilterMed) {
                     const barcodeMatch = findMedicineByBarcodeOrQR(term);
                     if (barcodeMatch && barcodeMatch.medicine && barcodeMatch.batch) {
                       if (searchInputRef.current) searchInputRef.current.value = '';
@@ -2130,10 +2232,18 @@ export const POSBillingView: React.FC = () => {
                   }
                 } else if (e.key === 'Escape') {
                   e.preventDefault();
-                  setIsDropdownOpen(false);
+                  if (selectedSaltFilterMed) {
+                    setSelectedSaltFilterMed(null);
+                  } else {
+                    setIsDropdownOpen(false);
+                  }
                 }
               }}
-              placeholder="Shift+M / Shift+F2: Scan Barcode or type medicine brand name, salt (e.g. Dolo, Paracetamol)..."
+              placeholder={
+                selectedSaltFilterMed
+                  ? `Showing generic substitutes for ${selectedSaltFilterMed.name}... Type to search all`
+                  : 'Shift+M / Shift+F2: Scan Barcode or type medicine brand name, salt (e.g. Dolo, Paracetamol)...'
+              }
               className="w-full pl-9 pr-24 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner"
             />
             <div className="absolute right-2 top-1.5 flex items-center gap-1">
@@ -2143,20 +2253,66 @@ export const POSBillingView: React.FC = () => {
           </div>
 
           {/* Clean, Simple Medicine Search Results Dropdown */}
-          {isDropdownOpen && filteredMedicines.length > 0 && (
+          {isDropdownOpen && (filteredMedicines.length > 0 || selectedSaltFilterMed) && (
             <div
               ref={searchContainerRef}
               className="absolute left-0 right-0 top-11 z-50 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden max-h-[420px] flex flex-col w-full max-w-full lg:max-w-3xl animate-in fade-in zoom-in-95 duration-100"
             >
-              {/* Header: Clean Results Count */}
-              <div className="bg-slate-50 dark:bg-slate-800/80 px-3.5 py-2 border-b border-slate-200 dark:border-slate-700/80 flex items-center justify-between text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                <span>
-                  Matching Medicines ({filteredMedicines.length})
-                </span>
-                <span className="text-[10px] text-slate-400 font-normal hidden sm:inline">
-                  Use ↑ ↓ arrows &amp; Enter to pick
-                </span>
-              </div>
+              {/* Header: Results Count or Generic Substitute Mode */}
+              {selectedSaltFilterMed ? (
+                <div className="bg-amber-50 dark:bg-amber-950/80 px-3.5 py-2 border-b border-amber-200 dark:border-amber-800/80 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+                      ⇄
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-amber-950 dark:text-amber-100">
+                          In-Stock Generic Substitutes for {selectedSaltFilterMed.name}
+                        </span>
+                        <span className="px-2 py-0.2 rounded-full bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 text-[10px] font-bold">
+                          {filteredMedicines.filter((m) => m.totalStock > 0).length} Available
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-amber-700 dark:text-amber-300 font-mono mt-0.5">
+                        Exact Chemical Salt: {selectedSaltFilterMed.genericName}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSaltFilterMed(null)}
+                    className="px-2.5 py-1 rounded text-[11px] font-bold bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors shadow-2xs cursor-pointer"
+                  >
+                    Clear Filter ✕
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-slate-50 dark:bg-slate-800/80 px-3.5 py-2 border-b border-slate-200 dark:border-slate-700/80 flex items-center justify-between text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                  <span>
+                    Matching Medicines ({filteredMedicines.length})
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-normal hidden sm:inline">
+                    Use ↑ ↓ arrows &amp; Enter to pick
+                  </span>
+                </div>
+              )}
+
+              {/* Empty state when no matching substitute found */}
+              {filteredMedicines.length === 0 && selectedSaltFilterMed && (
+                <div className="p-6 text-center text-xs text-slate-500 dark:text-slate-400 space-y-2">
+                  <p className="font-semibold text-slate-800 dark:text-slate-200">
+                    No active substitutes with exact salt <span className="font-mono text-amber-600 dark:text-amber-400">"{selectedSaltFilterMed.genericName}"</span> found in stock.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSaltFilterMed(null)}
+                    className="text-xs font-bold text-emerald-600 hover:underline"
+                  >
+                    Return to all medicines
+                  </button>
+                </div>
+              )}
 
               {/* Clean Single-Column Medicine List */}
               <div className="overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 max-h-[340px]">
@@ -2167,6 +2323,10 @@ export const POSBillingView: React.FC = () => {
                   const stripPrice = fefoBatch?.saleRate || fefoBatch?.mrp || med.batches[0]?.saleRate || med.batches[0]?.mrp || 0;
                   const perTabPrice = getPerUnitRate(stripPrice, packCount);
                   const inStock = med.totalStock > 0;
+                  const inStockAlternatives = medicines.filter(
+                    (m) => m.id !== med.id && m.totalStock > 0 && areSaltsMatching(m.genericName, med.genericName)
+                  );
+                  const altCount = inStockAlternatives.length;
 
                   return (
                     <div
@@ -2204,8 +2364,8 @@ export const POSBillingView: React.FC = () => {
                         </p>
                       </div>
 
-                      {/* Right: Stock, Price & Pick Button */}
-                      <div className="flex items-center gap-3 shrink-0">
+                      {/* Right: Stock, Price, Alternatives & Pick Button */}
+                      <div className="flex items-center gap-2.5 shrink-0">
                         {/* Stock Status Badge */}
                         <span
                           className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
@@ -2216,6 +2376,42 @@ export const POSBillingView: React.FC = () => {
                         >
                           {inStock ? `${med.totalStock} in stock` : 'Out of Stock'}
                         </span>
+
+                        {/* 1-Click Generic / Salt Substitute Swap tag (Never Lose a Sale) */}
+                        {!inStock && altCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedSaltFilterMed(med);
+                              setIsDropdownOpen(true);
+                              setHighlightedIndex(0);
+                            }}
+                            title={`1-Click Generic Swap: Click to filter ${altCount} in-stock brand(s) with ${med.genericName}`}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 hover:bg-amber-600 active:scale-95 text-white shadow-xs transition-all cursor-pointer ring-1 ring-amber-400"
+                          >
+                            <span className="font-extrabold text-xs leading-none">⇄</span>
+                            <span>{altCount} In-Stock Alternative{altCount > 1 ? 's' : ''}</span>
+                          </button>
+                        )}
+
+                        {/* If in stock, show subtle alternative count tag for generic comparison */}
+                        {inStock && altCount > 0 && !selectedSaltFilterMed && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedSaltFilterMed(med);
+                              setIsDropdownOpen(true);
+                              setHighlightedIndex(0);
+                            }}
+                            title={`View ${altCount} other in-stock brand(s) with ${med.genericName}`}
+                            className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-500 dark:text-slate-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors"
+                          >
+                            <span>⇄</span>
+                            <span>{altCount} alt</span>
+                          </button>
+                        )}
 
                         {/* Price */}
                         <div className="text-right min-w-[70px]">
@@ -2248,7 +2444,7 @@ export const POSBillingView: React.FC = () => {
                           </button>
                         )}
 
-                        {/* Pick / Add Button (Auto-FEFO First-to-Expiry) */}
+                        {/* Pick / Add Button (Auto-FEFO First-to-Expiry or Swap Alt) */}
                         <button
                           type="button"
                           tabIndex={-1}
@@ -2257,12 +2453,14 @@ export const POSBillingView: React.FC = () => {
                             handleSelectMedicine(med);
                           }}
                           className={`px-2.5 py-1 rounded text-xs font-bold transition-all shadow-2xs shrink-0 ${
-                            isHighlighted
+                            !inStock && altCount > 0
+                              ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                              : isHighlighted
                               ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                               : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-emerald-600 hover:text-white'
                           }`}
                         >
-                          + Pick
+                          {!inStock && altCount > 0 ? '⇄ Swap Alt' : inStock ? '+ Pick' : 'OOS'}
                         </button>
                       </div>
                     </div>
