@@ -2794,37 +2794,7 @@ export const POSBillingView: React.FC = () => {
             <span>Modify Membership</span>
           </button>
         </div>
-      ) : (
-        <div className="p-2.5 rounded-lg bg-gradient-to-r from-emerald-50/70 via-slate-50 to-amber-50/50 dark:from-emerald-950/30 dark:via-slate-800/60 dark:to-amber-950/20 border border-emerald-200/80 dark:border-emerald-800/60 flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 min-w-0">
-            <Crown className="h-4 w-4 text-amber-500 shrink-0" />
-            <span className="truncate">
-              {currentActivePhone && currentActivePhone.replace(/\D/g, '').length >= 10 ? (
-                <>
-                  <strong>{selectedCustomer ? selectedCustomer.name : walkinName}</strong> ({currentActivePhone}) is not enrolled in Pharmacy Club.
-                </>
-              ) : (
-                <>
-                  <strong>Pharmacy Club Loyalty Program:</strong> Enroll customer in 1 click for instant 10% to 20% discounts on all eligible medicines.
-                </>
-              )}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setQuickEnrollName(selectedCustomer ? selectedCustomer.name : (walkinName !== 'Walk-in Cash Customer' ? walkinName : ''));
-              setQuickEnrollPhone(currentActivePhone);
-              setIsQuickEnrollOpen(true);
-            }}
-            className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
-            title="1-Click Customer Loyalty Membership"
-          >
-            <PlusCircle className="h-3.5 w-3.5" />
-            <span>1-Click Enroll Member (10%-20% Discount)</span>
-          </button>
-        </div>
-      )}
+      ) : null}
 
       {quickEnrollSuccessMsg && (
         <div className="p-2 bg-emerald-100 dark:bg-emerald-950 border border-emerald-300 dark:border-emerald-700 rounded text-emerald-800 dark:text-emerald-200 text-xs font-bold flex items-center gap-2">
