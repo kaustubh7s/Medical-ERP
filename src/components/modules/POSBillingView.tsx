@@ -138,6 +138,7 @@ export const POSBillingView: React.FC = () => {
   const [selectedMed, setSelectedMed] = useState<Medicine | null>(null);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [batchHighlightedIndex, setBatchHighlightedIndex] = useState<number>(0);
+  const [editingCartItemIndex, setEditingCartItemIndex] = useState<number | null>(null);
 
   // Cart & Line Items
   const [cart, setCart] = useState<InvoiceItem[]>([]);
@@ -366,17 +367,18 @@ export const POSBillingView: React.FC = () => {
           selectedMed.batches.find((b) => b.availableQuantity > 0) ||
           selectedMed.batches[0];
         if (chosenBatch && chosenBatch.availableQuantity > 0) {
-          addItemToCart(selectedMed, chosenBatch);
+          handleBatchSelect(selectedMed, chosenBatch);
         }
       } else if (e.key === 'Escape') {
         e.preventDefault();
         setIsBatchModalOpen(false);
+        setEditingCartItemIndex(null);
         searchInputRef.current?.focus();
       } else if (/^[1-9]$/.test(e.key)) {
         const idx = parseInt(e.key, 10) - 1;
         if (selectedMed.batches[idx] && selectedMed.batches[idx].availableQuantity > 0) {
           e.preventDefault();
-          addItemToCart(selectedMed, selectedMed.batches[idx]);
+          handleBatchSelect(selectedMed, selectedMed.batches[idx]);
         }
       }
     };
@@ -826,6 +828,61 @@ export const POSBillingView: React.FC = () => {
     }
     // Fallback: earliest expiry batch overall
     return [...med.batches].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))[0];
+  };
+
+  const handleOpenBatchSwitchForCartItem = (index: number) => {
+    const item = cart[index];
+    if (!item || item.itemCategory === 'MEMBERSHIP') return;
+    const med = medicines.find((m) => m.id === item.medicineId);
+    if (!med) return;
+    setSelectedMed(med);
+    const currentBatchIdx = med.batches.findIndex((b) => b.id === item.batchId);
+    setBatchHighlightedIndex(currentBatchIdx >= 0 ? currentBatchIdx : 0);
+    setEditingCartItemIndex(index);
+    setIsBatchModalOpen(true);
+  };
+
+  const handleBatchSelect = (medicine: Medicine, batch: Batch) => {
+    if (batch.availableQuantity <= 0) {
+      alert(`Batch ${batch.batchNumber} has 0 stock!`);
+      return;
+    }
+
+    if (editingCartItemIndex !== null && cart[editingCartItemIndex]) {
+      setCart((prev) =>
+        prev.map((item, idx) => {
+          if (idx !== editingCartItemIndex) return item;
+          const packCount = item.unitsPerPack || 1;
+          const isLoose = item.unitType === 'LOOSE';
+          const stripRate = batch.saleRate || batch.mrp;
+          const calculatedRate = isLoose ? getPerUnitRate(stripRate, packCount) : stripRate;
+          const netItemTotal = calculatedRate * item.quantity;
+          const gstRate = item.gstRate || 12;
+          const taxable = netItemTotal / (1 + gstRate / 100);
+
+          return {
+            ...item,
+            batchId: batch.id,
+            batchNumber: batch.batchNumber,
+            expiryDate: batch.expiryDate,
+            rate: calculatedRate,
+            mrp: batch.mrp,
+            totalAmount: netItemTotal,
+            cgstAmount: (taxable * (gstRate / 2)) / 100,
+            sgstAmount: (taxable * (gstRate / 2)) / 100,
+            costRate: isLoose ? getPerUnitRate(batch.purchaseRate, packCount) : batch.purchaseRate,
+          };
+        })
+      );
+      setEditingCartItemIndex(null);
+      setIsBatchModalOpen(false);
+      setSelectedMed(null);
+    } else {
+      addItemToCart(medicine, batch);
+      setIsBatchModalOpen(false);
+      setSelectedMed(null);
+    }
+    searchInputRef.current?.focus();
   };
 
   const handleSelectMedicine = (med: Medicine) => {
@@ -2172,11 +2229,34 @@ export const POSBillingView: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Pick / Add Button */}
+                        {/* If multiple batches exist, provide manual batch choice button */}
+                        {med.batches.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedMed(med);
+                              setEditingCartItemIndex(null);
+                              setBatchHighlightedIndex(0);
+                              setIsBatchModalOpen(true);
+                              setIsDropdownOpen(false);
+                            }}
+                            title={`Manually choose from ${med.batches.length} available batches`}
+                            className="px-2 py-1 rounded text-[11px] font-semibold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors shadow-2xs shrink-0"
+                          >
+                            Batches ({med.batches.length})
+                          </button>
+                        )}
+
+                        {/* Pick / Add Button (Auto-FEFO First-to-Expiry) */}
                         <button
                           type="button"
                           tabIndex={-1}
-                          className={`px-2.5 py-1 rounded text-xs font-bold transition-all shadow-2xs ${
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSelectMedicine(med);
+                          }}
+                          className={`px-2.5 py-1 rounded text-xs font-bold transition-all shadow-2xs shrink-0 ${
                             isHighlighted
                               ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                               : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-emerald-600 hover:text-white'
@@ -2654,7 +2734,17 @@ export const POSBillingView: React.FC = () => {
                           {item.genericName} • {packCount > 1 ? `Pack: ${packCount} Tab/Strip` : '1 Unit'}
                         </p>
                       </td>
-                      <td className="font-mono text-slate-700 dark:text-slate-300 font-semibold">{item.batchNumber}</td>
+                      <td className="font-mono">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenBatchSwitchForCartItem(index)}
+                          title="Click to manually choose a different batch"
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 hover:text-emerald-700 dark:hover:text-emerald-400 font-mono font-bold text-xs transition-colors cursor-pointer group"
+                        >
+                          <span>{item.batchNumber}</span>
+                          <span className="text-[10px] text-slate-400 group-hover:text-emerald-500 font-sans underline">change</span>
+                        </button>
+                      </td>
                       <td className="font-mono text-slate-500 text-[11px]">{item.expiryDate}</td>
                       <td className="font-mono text-slate-400 text-[11px]">{item.hsnCode}</td>
 
@@ -2921,7 +3011,16 @@ export const POSBillingView: React.FC = () => {
                       )}
                     </div>
                     <p className="text-[10px] text-slate-500 truncate mt-0.5">
-                      {item.genericName} • Batch: <strong className="font-mono text-slate-700 dark:text-slate-300">{item.batchNumber}</strong> ({item.expiryDate})
+                      {item.genericName} • Batch:{' '}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenBatchSwitchForCartItem(index)}
+                        className="font-mono font-bold text-slate-800 dark:text-slate-200 underline decoration-slate-400 hover:text-emerald-600"
+                        title="Click to switch batch"
+                      >
+                        {item.batchNumber} ✎
+                      </button>{' '}
+                      ({item.expiryDate})
                     </p>
                   </div>
                   <button
@@ -3468,10 +3567,21 @@ export const POSBillingView: React.FC = () => {
         isOpen={isBatchModalOpen}
         onClose={() => {
           setIsBatchModalOpen(false);
+          setEditingCartItemIndex(null);
           searchInputRef.current?.focus();
         }}
-        title={selectedMed ? `Select Batch: ${selectedMed.name}` : 'Select Batch'}
-        subtitle="Batches sorted automatically by FEFO (First-Expiry-First-Out) • Use [↑/↓] or [1-9] to pick"
+        title={
+          editingCartItemIndex !== null && selectedMed
+            ? `Switch Batch: ${selectedMed.name}`
+            : selectedMed
+            ? `Select Batch: ${selectedMed.name}`
+            : 'Select Batch'
+        }
+        subtitle={
+          editingCartItemIndex !== null
+            ? `Currently active: Batch ${cart[editingCartItemIndex]?.batchNumber} • Select replacement batch below`
+            : 'Batches sorted automatically by FEFO (First-Expiry-First-Out) • Use [↑/↓] or [1-9] to pick'
+        }
         maxWidth="lg"
       >
         {selectedMed && (
@@ -3507,7 +3617,7 @@ export const POSBillingView: React.FC = () => {
                         key={batch.id}
                         ref={isHighlighted ? batchActiveRowRef : undefined}
                         onMouseEnter={() => setBatchHighlightedIndex(bIdx)}
-                        onClick={() => addItemToCart(selectedMed, batch)}
+                        onClick={() => handleBatchSelect(selectedMed, batch)}
                         className={`cursor-pointer transition-colors ${
                           isHighlighted
                             ? 'bg-emerald-100/90 dark:bg-emerald-950/70 border-l-4 border-l-emerald-600 font-bold'
@@ -3563,7 +3673,7 @@ export const POSBillingView: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              addItemToCart(selectedMed, batch);
+                              handleBatchSelect(selectedMed, batch);
                             }}
                             disabled={batch.availableQuantity <= 0}
                             className={`px-3 py-1 rounded font-bold text-xs shadow-xs ${
