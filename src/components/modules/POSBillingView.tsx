@@ -2528,6 +2528,21 @@ export const POSBillingView: React.FC = () => {
             <span>🔁 Repeat Last Order</span>
           </button>
 
+          {/* 1-Click Membership Quick Action */}
+          <button
+            type="button"
+            onClick={() => {
+              setQuickEnrollName(selectedCustomer ? selectedCustomer.name : (walkinName !== 'Walk-in Cash Customer' ? walkinName : ''));
+              setQuickEnrollPhone(currentActivePhone);
+              setIsQuickEnrollOpen(true);
+            }}
+            title="1-Click Customer Loyalty Membership"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition-colors shrink-0"
+          >
+            <Crown className="h-3.5 w-3.5 text-amber-300" />
+            <span>1-Click Membership</span>
+          </button>
+
           {/* Prescribing Doctor */}
           <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-2 py-1">
             <Stethoscope className="h-3.5 w-3.5 text-slate-400" />
@@ -2622,8 +2637,23 @@ export const POSBillingView: React.FC = () => {
             </div>
           </div>
 
-          {/* Row 2: 3 Action Buttons (Repeat Last Order, Hold Current Bill, Parked Bills) */}
-          <div className="grid grid-cols-3 gap-2">
+          {/* Row 2: 4 Action Buttons (1-Click Membership, Repeat Last Order, Hold Current Bill, Parked Bills) */}
+          <div className="grid grid-cols-4 gap-1.5">
+            {/* 1-Click Membership */}
+            <button
+              type="button"
+              onClick={() => {
+                setQuickEnrollName(selectedCustomer ? selectedCustomer.name : (walkinName !== 'Walk-in Cash Customer' ? walkinName : ''));
+                setQuickEnrollPhone(currentActivePhone);
+                setIsQuickEnrollOpen(true);
+              }}
+              title="1-Click Membership"
+              className="flex items-center justify-center gap-1 py-2 px-1 rounded-lg bg-emerald-700 active:bg-emerald-800 text-white text-[11px] font-bold shadow-xs transition-colors"
+            >
+              <Crown className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+              <span className="truncate">Membership</span>
+            </button>
+
             {/* Repeat Last Order */}
             <button
               type="button"
@@ -2632,10 +2662,10 @@ export const POSBillingView: React.FC = () => {
                 setIsCustomerModalOpen(true);
               }}
               title="Repeat Last Order"
-              className="flex items-center justify-center gap-1 py-2 px-1 rounded-lg bg-purple-700 active:bg-purple-800 text-white text-[11px] sm:text-xs font-bold shadow-xs transition-colors"
+              className="flex items-center justify-center gap-1 py-2 px-1 rounded-lg bg-purple-700 active:bg-purple-800 text-white text-[11px] font-bold shadow-xs transition-colors"
             >
               <RotateCcw className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">Repeat Order</span>
+              <span className="truncate">Repeat</span>
             </button>
 
             {/* F5 Hold */}
@@ -2643,10 +2673,10 @@ export const POSBillingView: React.FC = () => {
               type="button"
               onClick={handleHoldCurrentBill}
               title="Hold active bill"
-              className="flex items-center justify-center gap-1 py-2 px-1 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 active:bg-amber-100 text-amber-800 dark:text-amber-300 text-[11px] sm:text-xs font-bold shadow-xs transition-colors"
+              className="flex items-center justify-center gap-1 py-2 px-1 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 active:bg-amber-100 text-amber-800 dark:text-amber-300 text-[11px] font-bold shadow-xs transition-colors"
             >
               <PauseCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-              <span className="truncate">Hold Bill</span>
+              <span className="truncate">Hold</span>
             </button>
 
             {/* F6 Parked Bills */}
@@ -2654,7 +2684,7 @@ export const POSBillingView: React.FC = () => {
               type="button"
               onClick={() => setIsHeldModalOpen(true)}
               title="View parked bills"
-              className={`flex items-center justify-center gap-1 py-2 px-1 rounded-lg border text-[11px] sm:text-xs font-bold shadow-xs transition-colors ${
+              className={`flex items-center justify-center gap-1 py-2 px-1 rounded-lg border text-[11px] font-bold shadow-xs transition-colors ${
                 heldBills.length > 0
                   ? 'border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 active:bg-blue-100'
                   : 'border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 active:bg-slate-100'
@@ -2743,12 +2773,12 @@ export const POSBillingView: React.FC = () => {
             </div>
           )}
         </div>
-      ) : currentActivePhone && currentActivePhone.replace(/\D/g, '').length >= 10 ? (
-        <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
-            <Crown className="h-4 w-4 text-amber-500" />
+      ) : cart.some((it) => it.itemCategory === 'MEMBERSHIP') ? (
+        <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-emerald-900 dark:text-emerald-200 font-medium">
+            <Crown className="h-4 w-4 text-amber-500 shrink-0" />
             <span>
-              <strong>{selectedCustomer ? selectedCustomer.name : walkinName}</strong> ({currentActivePhone}) is not enrolled in Pharmacy Club.
+              <strong>Membership Service in Cart:</strong> Instant 10% loyalty discount active on all eligible medicines in this bill!
             </span>
           </div>
           <button
@@ -2758,13 +2788,43 @@ export const POSBillingView: React.FC = () => {
               setQuickEnrollPhone(currentActivePhone);
               setIsQuickEnrollOpen(true);
             }}
-            className="px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] flex items-center gap-1 shadow-xs transition-colors"
+            className="px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] flex items-center gap-1 shadow-xs transition-colors shrink-0"
+          >
+            <Crown className="h-3.5 w-3.5 text-amber-300" />
+            <span>Modify Membership</span>
+          </button>
+        </div>
+      ) : (
+        <div className="p-2.5 rounded-lg bg-gradient-to-r from-emerald-50/70 via-slate-50 to-amber-50/50 dark:from-emerald-950/30 dark:via-slate-800/60 dark:to-amber-950/20 border border-emerald-200/80 dark:border-emerald-800/60 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 min-w-0">
+            <Crown className="h-4 w-4 text-amber-500 shrink-0" />
+            <span className="truncate">
+              {currentActivePhone && currentActivePhone.replace(/\D/g, '').length >= 10 ? (
+                <>
+                  <strong>{selectedCustomer ? selectedCustomer.name : walkinName}</strong> ({currentActivePhone}) is not enrolled in Pharmacy Club.
+                </>
+              ) : (
+                <>
+                  <strong>Pharmacy Club Loyalty Program:</strong> Enroll customer in 1 click for instant 10% to 20% discounts on all eligible medicines.
+                </>
+              )}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setQuickEnrollName(selectedCustomer ? selectedCustomer.name : (walkinName !== 'Walk-in Cash Customer' ? walkinName : ''));
+              setQuickEnrollPhone(currentActivePhone);
+              setIsQuickEnrollOpen(true);
+            }}
+            className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
+            title="1-Click Customer Loyalty Membership"
           >
             <PlusCircle className="h-3.5 w-3.5" />
             <span>1-Click Enroll Member (10%-20% Discount)</span>
           </button>
         </div>
-      ) : null}
+      )}
 
       {quickEnrollSuccessMsg && (
         <div className="p-2 bg-emerald-100 dark:bg-emerald-950 border border-emerald-300 dark:border-emerald-700 rounded text-emerald-800 dark:text-emerald-200 text-xs font-bold flex items-center gap-2">
@@ -3088,6 +3148,24 @@ export const POSBillingView: React.FC = () => {
                     -₹{membershipDiscountAmount.toFixed(2)}
                   </span>
                 </div>
+              </div>
+            )}
+
+            {!currentMember && !cart.some((it) => it.itemCategory === 'MEMBERSHIP') && (
+              <div className="flex items-center gap-1.5 border-l border-slate-200 dark:border-slate-800 pl-2.5 md:pl-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickEnrollName(selectedCustomer ? selectedCustomer.name : (walkinName !== 'Walk-in Cash Customer' ? walkinName : ''));
+                    setQuickEnrollPhone(currentActivePhone);
+                    setIsQuickEnrollOpen(true);
+                  }}
+                  className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 hover:underline transition-colors"
+                  title="1-Click Customer Loyalty Membership"
+                >
+                  <Crown className="h-3.5 w-3.5 text-amber-500" />
+                  <span>1-Click Member</span>
+                </button>
               </div>
             )}
 
@@ -4746,6 +4824,38 @@ export const POSBillingView: React.FC = () => {
                         {/* Actions */}
                         <td className="text-center" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-center gap-1.5">
+                            {/* 1-Click Enroll Membership */}
+                            {(() => {
+                              const isCustMember = !!getMemberByPhone(c.phone);
+                              if (!isCustMember) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedCustomer(c);
+                                      walkinName !== c.name && setWalkinName(c.name);
+                                      setWalkinPhone(c.phone);
+                                      if (c.doctorName) setDoctorName(c.doctorName);
+                                      setQuickEnrollName(c.name);
+                                      setQuickEnrollPhone(c.phone);
+                                      setIsCustomerModalOpen(false);
+                                      setIsQuickEnrollOpen(true);
+                                    }}
+                                    title="1-Click Enroll into Pharmacy Club Membership"
+                                    className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold flex items-center gap-1 shadow-xs transition-transform active:scale-95"
+                                  >
+                                    <Crown className="h-3 w-3 text-amber-200" />
+                                    <span>+ Club</span>
+                                  </button>
+                                );
+                              }
+                              return (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[10px] font-mono font-bold">
+                                  ★ Member
+                                </span>
+                              );
+                            })()}
+
                             {/* Repeat Last Order Button (R) */}
                             <button
                               type="button"
@@ -4819,14 +4929,43 @@ export const POSBillingView: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800">
+                    {(() => {
+                      const isCustMember = !!getMemberByPhone(c.phone);
+                      if (!isCustMember) {
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCustomer(c);
+                              setWalkinName(c.name);
+                              setWalkinPhone(c.phone);
+                              if (c.doctorName) setDoctorName(c.doctorName);
+                              setQuickEnrollName(c.name);
+                              setQuickEnrollPhone(c.phone);
+                              setIsCustomerModalOpen(false);
+                              setIsQuickEnrollOpen(true);
+                            }}
+                            className="py-1.5 px-2 rounded-lg bg-amber-600 active:bg-amber-700 text-white text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs"
+                          >
+                            <Crown className="h-3 w-3 text-amber-200" />
+                            <span>+ Club</span>
+                          </button>
+                        );
+                      }
+                      return (
+                        <span className="px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[10px] font-mono font-bold">
+                          ★ Member
+                        </span>
+                      );
+                    })()}
                     <button
                       type="button"
                       onClick={() => openRepeatOrderForCustomer(c)}
                       className="flex-1 py-1.5 px-2 rounded-lg bg-purple-700 active:bg-purple-800 text-white text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs"
                     >
                       <RotateCcw className="h-3 w-3" />
-                      <span>Repeat Order</span>
+                      <span>Repeat</span>
                     </button>
                     <button
                       type="button"
@@ -4840,7 +4979,7 @@ export const POSBillingView: React.FC = () => {
                       }}
                       className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-700 active:bg-emerald-800 text-white text-[11px] font-bold shadow-xs text-center"
                     >
-                      Select Patient
+                      Select
                     </button>
                   </div>
                 </div>

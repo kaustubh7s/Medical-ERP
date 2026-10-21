@@ -90,10 +90,10 @@ export const CompactMembershipRegistrationForm: React.FC<CompactMembershipRegist
 
   // Auto-fill from initial props
   useEffect(() => {
-    if (initialCustomerName && !customerName) {
+    if (initialCustomerName !== undefined) {
       setCustomerName(initialCustomerName);
     }
-    if (initialCustomerPhone && !customerPhone) {
+    if (initialCustomerPhone !== undefined) {
       setCustomerPhone(initialCustomerPhone.replace(/\D/g, '').slice(0, 10));
     }
   }, [initialCustomerName, initialCustomerPhone]);
