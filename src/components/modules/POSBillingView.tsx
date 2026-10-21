@@ -251,6 +251,7 @@ export const POSBillingView: React.FC = () => {
   const lastProcessedItemTimeRef = useRef<number>(0);
   const fastScanTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const activeRowRef = useRef<HTMLTableRowElement>(null);
@@ -279,7 +280,7 @@ export const POSBillingView: React.FC = () => {
   const totalPatientsWithDue = customers.filter((c) => c.currentDue > 0).length;
   const totalKhataDueAmount = customers.reduce((sum, c) => sum + c.currentDue, 0);
 
-  // Instant search filter
+  // Instant search filter: matches by name, salt, or barcode, or shows top catalog medicines when opened
   const filteredMedicines = searchTerm.trim()
     ? medicines.filter(
         (m) =>
@@ -287,7 +288,7 @@ export const POSBillingView: React.FC = () => {
           m.genericName.toLowerCase().includes(searchTerm.toLowerCase()) ||
           (m.barcode && m.barcode.includes(searchTerm))
       )
-    : [];
+    : (isDropdownOpen ? medicines.slice(0, 10) : []);
 
   // Currently previewed medicine in search dropdown
   const currentPreviewMed: Medicine | null =
@@ -359,9 +360,11 @@ export const POSBillingView: React.FC = () => {
         setBatchHighlightedIndex((prev) => (prev > 0 ? prev - 1 : selectedMed.batches.length - 1));
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        // Prevent instant selection by trailing Enter keystrokes from barcode scanners or search inputs
-        if (Date.now() - modalOpenTime < 350) return;
-        const chosenBatch = selectedMed.batches[batchHighlightedIndex];
+        if (e.repeat) return;
+        const chosenBatch =
+          selectedMed.batches[batchHighlightedIndex] ||
+          selectedMed.batches.find((b) => b.availableQuantity > 0) ||
+          selectedMed.batches[0];
         if (chosenBatch && chosenBatch.availableQuantity > 0) {
           addItemToCart(selectedMed, chosenBatch);
         }
@@ -370,7 +373,6 @@ export const POSBillingView: React.FC = () => {
         setIsBatchModalOpen(false);
         searchInputRef.current?.focus();
       } else if (/^[1-9]$/.test(e.key)) {
-        if (Date.now() - modalOpenTime < 350) return;
         const idx = parseInt(e.key, 10) - 1;
         if (selectedMed.batches[idx] && selectedMed.batches[idx].availableQuantity > 0) {
           e.preventDefault();
@@ -527,7 +529,7 @@ export const POSBillingView: React.FC = () => {
       } else if (e.key === ' ') {
         e.preventDefault();
         handleToggleRepeatItem(repeatHighlightedIndex);
-      } else if (e.key === 'c' || e.key === 'C') {
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === 'c' || e.key === 'C')) {
         // Toggle Cut-Strip / Loose Tablet Mode via 'C' key directly without touching mouse!
         e.preventDefault();
         toggleRepeatItemUnitType(repeatHighlightedIndex);
@@ -589,10 +591,8 @@ export const POSBillingView: React.FC = () => {
             )));
 
       // 1. Shift+C = Search for customer (open Patient Directory / Khata Modal)
-      if (
-        ((isShift && (e.key === 'C' || e.key === 'c')) && !isOtherTextEntry) ||
-        (isCtrlOrCmd && (e.key === 'c' || e.key === 'C') && !isOtherTextEntry)
-      ) {
+      // Strictly Shift+C only (never Ctrl+C so native clipboard copy is fully preserved)
+      if (isShift && !isCtrlOrCmd && (e.key === 'C' || e.key === 'c') && !isOtherTextEntry) {
         e.preventDefault();
         if (isPaymentModalOpen) return;
         setRepeatSearchTerm('');
@@ -600,12 +600,9 @@ export const POSBillingView: React.FC = () => {
         return;
       }
 
-      // 2. Shift+M = Search medical (focus medicine search/scan input and open dropdown)
-      // Also supports Shift+A / Ctrl+M / Ctrl+A as backward-compatible aliases
-      if (
-        ((isShift && (e.key === 'M' || e.key === 'm' || e.key === 'A' || e.key === 'a')) && !isOtherTextEntry) ||
-        (isCtrlOrCmd && (e.key === 'm' || e.key === 'M' || e.key === 'a' || e.key === 'A'))
-      ) {
+      // 2. Shift+M / Shift+A = Search medicine (focus medicine search/scan input and open dropdown)
+      // Strictly Shift shortcuts only (never Ctrl+A / Ctrl+M so native select-all is fully preserved)
+      if (isShift && !isCtrlOrCmd && (e.key === 'M' || e.key === 'm' || e.key === 'A' || e.key === 'a') && !isOtherTextEntry) {
         e.preventDefault();
         if (isPaymentModalOpen) return;
         setIsCustomerModalOpen(false);
@@ -624,7 +621,7 @@ export const POSBillingView: React.FC = () => {
         e.preventDefault();
         searchInputRef.current?.focus();
         setIsDropdownOpen(true);
-      } else if ((isShift && e.key === 'F4') || e.key === 'F4' || (isCtrlOrCmd && e.key === 'F4')) {
+      } else if ((isShift && e.key === 'F4') || e.key === 'F4' || e.key === 'F9') {
         e.preventDefault();
         if (cart.length > 0) setIsPaymentModalOpen(true);
       } else if ((isShift && e.key === 'F5') || e.key === 'F5') {
@@ -821,6 +818,7 @@ export const POSBillingView: React.FC = () => {
 
   const handleSelectMedicine = (med: Medicine) => {
     setSelectedMed(med);
+    setBatchHighlightedIndex(0);
     if (med.batches.length === 1) {
       addItemToCart(med, med.batches[0]);
     } else {
@@ -1933,7 +1931,7 @@ export const POSBillingView: React.FC = () => {
       }
 
       if (
-        ((isShift && e.key === 'F4') || e.key === 'F4' || (isCtrlOrCmd && e.key === 'F4') || e.key === 'Enter') &&
+        ((isShift && e.key === 'F4') || e.key === 'F4' || e.key === 'Enter') &&
         paymentMode !== 'POS_TERMINAL'
       ) {
         const activeTag = document.activeElement?.tagName;
@@ -1949,7 +1947,7 @@ export const POSBillingView: React.FC = () => {
   }, [isPaymentModalOpen, paymentMode, handleCompleteSale]);
 
   return (
-    <div className="w-full max-w-full overflow-x-hidden space-y-2.5">
+    <div className="w-full max-w-full overflow-x-hidden space-y-2.5 pb-12 md:pb-10">
       {/* 1. Fast Counter Barcode / Medicine Search Ribbon */}
       <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-xs w-full max-w-full">
         {/* Medicine / Barcode Input with Keyboard Arrow Support */}
@@ -1970,10 +1968,20 @@ export const POSBillingView: React.FC = () => {
                   setIsDropdownOpen(true);
                 }
 
-                // Ultra-fast auto-scan for phone Bluetooth scanners typing into search input (30ms compound, 60ms numeric)
+                // Ultra-fast auto-scan for phone Bluetooth scanners typing into search input (30ms compound/URL, 60ms numeric)
                 if (fastScanTimerRef.current) clearTimeout(fastScanTimerRef.current);
                 const cleanVal = val.trim();
-                const isCompound = cleanVal.includes('|') && (cleanVal.includes('EXP') || cleanVal.includes('MRP') || cleanVal.split('|').length >= 3);
+                const isUrlOrGs1 =
+                  cleanVal.startsWith('http://') ||
+                  cleanVal.startsWith('https://') ||
+                  cleanVal.includes('/01/') ||
+                  cleanVal.includes('/01 ') ||
+                  cleanVal.includes('verify.') ||
+                  cleanVal.includes('validate/') ||
+                  cleanVal.startsWith('010890');
+                const isCompound =
+                  (cleanVal.includes('|') && (cleanVal.includes('EXP') || cleanVal.includes('MRP') || cleanVal.split('|').length >= 3)) ||
+                  isUrlOrGs1;
                 const isStandardBarcode = /^\d{8,14}$/.test(cleanVal);
 
                 if (isCompound || isStandardBarcode) {
@@ -1991,6 +1999,11 @@ export const POSBillingView: React.FC = () => {
                 }
               }}
               onKeyDown={(e) => {
+                // If any modal is active, do not intercept keyboard navigation or Enter
+                if (isBatchModalOpen || isHeldModalOpen || isCustomerModalOpen || isPaymentModalOpen || repeatOrderModalOpen) {
+                  return;
+                }
+
                 if (e.key === 'ArrowDown') {
                   e.preventDefault();
                   if (!isDropdownOpen) {
@@ -2008,23 +2021,23 @@ export const POSBillingView: React.FC = () => {
                 } else if (e.key === 'Enter') {
                   if (fastScanTimerRef.current) clearTimeout(fastScanTimerRef.current);
                   e.preventDefault();
-                  e.stopPropagation();
                   const term = searchTerm.trim();
-                  if (!term) return;
 
                   // 1. First check if typed/scanned string is a barcode/QR match
-                  const barcodeMatch = findMedicineByBarcodeOrQR(term);
-                  if (barcodeMatch && barcodeMatch.medicine && barcodeMatch.batch) {
-                    if (searchInputRef.current) searchInputRef.current.value = '';
-                    setSearchTerm('');
-                    setIsDropdownOpen(false);
-                    setIsBatchModalOpen(false);
-                    setSelectedMed(null);
-                    handleBarcodeScanned(term);
-                    return;
+                  if (term) {
+                    const barcodeMatch = findMedicineByBarcodeOrQR(term);
+                    if (barcodeMatch && barcodeMatch.medicine && barcodeMatch.batch) {
+                      if (searchInputRef.current) searchInputRef.current.value = '';
+                      setSearchTerm('');
+                      setIsDropdownOpen(false);
+                      setIsBatchModalOpen(false);
+                      setSelectedMed(null);
+                      handleBarcodeScanned(term);
+                      return;
+                    }
                   }
 
-                  // 2. Otherwise select highlighted dropdown medicine ONLY when term is non-empty
+                  // 2. Select highlighted dropdown medicine
                   if (filteredMedicines.length > 0) {
                     const targetMed =
                       filteredMedicines[Math.min(highlightedIndex, filteredMedicines.length - 1)] ||
@@ -3349,6 +3362,8 @@ export const POSBillingView: React.FC = () => {
           </div>
         </aside>
       )}
+
+
 
       {/* MODAL 1: REPEAT & CUSTOMIZE PATIENT'S LAST ORDER */}
       <Modal

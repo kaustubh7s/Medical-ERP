@@ -114,6 +114,43 @@ const mockMedicines: Medicine[] = [
       },
     ],
   },
+  {
+    id: 'med-003',
+    name: 'Pause-500 (Tranexamic Acid Tablet)',
+    genericName: 'Tranexamic Acid Tablets IP 500mg',
+    manufacturer: 'Emcure Pharmaceuticals Ltd',
+    category: 'Antifibrinolytic',
+    dosageForm: 'TABLET',
+    strength: '500mg',
+    packSize: '10 Tablets / Strip',
+    unitsPerPack: 10,
+    hsnCode: '30049099',
+    gstRate: 12,
+    scheduleType: 'SCHEDULE_H',
+    totalStock: 80,
+    reorderLevel: 20,
+    maxStockLevel: 200,
+    requiresPrescription: true,
+    isMembershipDiscountEligible: true,
+    barcode: '8902319015572',
+    batches: [
+      {
+        id: 'bat-1601',
+        medicineId: 'med-003',
+        batchNumber: 'E16GQ25017',
+        mfgDate: '2025-05-01',
+        expiryDate: '2029-04-30',
+        quantity: 80,
+        availableQuantity: 80,
+        purchaseRate: 140.0,
+        mrp: 198.03,
+        saleRate: 198.03,
+        rackLocation: 'Rack B-4',
+        barcode: '8902319015572',
+        status: 'ACTIVE',
+      },
+    ],
+  },
 ];
 
 let mockBarcodeMappings: BarcodeQRMapping[] = [
@@ -127,6 +164,26 @@ let mockBarcodeMappings: BarcodeQRMapping[] = [
     notes: 'Existing factory box barcode',
     mappedAt: '2026-10-18 12:00:00',
   },
+  {
+    id: 'map-emcure-foil-item-code',
+    code: '514443138IN04',
+    medicineId: 'med-003',
+    medicineName: 'Pause-500 (Tranexamic Acid Tablet)',
+    batchNumber: 'E16GQ25017',
+    unitType: 'STRIP',
+    mappedAt: '2026-10-21 12:00:00',
+    notes: 'Emcure Pause 500 foil packaging product code',
+  },
+  {
+    id: 'map-emcure-distributor-sticker',
+    code: '23683',
+    medicineId: 'med-003',
+    medicineName: 'Pause-500 (Tranexamic Acid Tablet)',
+    batchNumber: 'E16GQ25017',
+    unitType: 'STRIP',
+    mappedAt: '2026-10-21 12:00:00',
+    notes: 'Pahul Distributors sticker barcode',
+  },
 ];
 
 // Helper to simulate store.tsx findMedicineByBarcodeOrQR
@@ -137,9 +194,14 @@ function findMedicineByBarcodeOrQR(
 ) {
   if (!rawCode) return null;
   const code = rawCode.trim();
+  const cleanCode = code.replace(/\s+/g, '');
 
-  // 1. Check custom barcodeMappings (exact raw code match)
-  const customMap = mappings.find((m) => m.code.toLowerCase() === code.toLowerCase());
+  // 1. Check custom barcodeMappings (exact raw code match or whitespace-cleansed match)
+  const customMap = mappings.find(
+    (m) =>
+      m.code.toLowerCase() === code.toLowerCase() ||
+      m.code.toLowerCase() === cleanCode.toLowerCase()
+  );
   if (customMap) {
     const med = medicines.find((m) => m.id === customMap.medicineId);
     if (med) {
@@ -150,12 +212,16 @@ function findMedicineByBarcodeOrQR(
     }
   }
 
-  // 2. Parse compound 2D QR / DataMatrix / Barcode payload (e.g. "UG-7721|EXP:2027-07-31|MRP:204.5")
+  // 2. Parse compound 2D QR / DataMatrix / GS1 Digital Link URL (e.g. "https://verify.emcure.com/validate/...")
   const parsed = parseCompoundBarcode(code);
 
   // 2a. Check if any extracted token or batchCandidate matches barcodeMappings
   for (const token of [parsed.batchCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
-    const tokenMap = mappings.find((m) => m.code.toLowerCase() === token.toLowerCase());
+    const tokenMap = mappings.find(
+      (m) =>
+        m.code.toLowerCase() === token.toLowerCase() ||
+        m.code.toLowerCase() === token.replace(/\s+/g, '').toLowerCase()
+    );
     if (tokenMap) {
       const med = medicines.find((m) => m.id === tokenMap.medicineId);
       if (med) {
@@ -170,7 +236,7 @@ function findMedicineByBarcodeOrQR(
   // 3. Batch candidate / token search in medicine batches
   const batchCandidates = Array.from(
     new Set(
-      [code, parsed.batchCandidate, ...parsed.tokens]
+      [code, cleanCode, parsed.batchCandidate, ...parsed.tokens]
         .filter(Boolean)
         .map((s) => (s as string).toLowerCase().trim())
     )
@@ -193,7 +259,7 @@ function findMedicineByBarcodeOrQR(
     }
   }
 
-  // 3b. Smart Fuzzy/Partial Batch match (e.g. scanned "UG-7721" matching batch "AUG-7721", confirmed by EXP or MRP or suffix)
+  // 3b. Smart Fuzzy/Partial Batch match
   if (parsed.batchCandidate) {
     const cleanCandidate = parsed.batchCandidate.toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -209,7 +275,6 @@ function findMedicineByBarcodeOrQR(
           parsed.batchCandidate.toLowerCase().includes(b.batchNumber.toLowerCase());
 
         if (isPartialMatch) {
-          // Check if MRP or expiry confirms the match
           const mrpMatches =
             parsed.mrpCandidate !== undefined &&
             (Math.abs(b.mrp - parsed.mrpCandidate) < 1.0 ||
@@ -229,16 +294,36 @@ function findMedicineByBarcodeOrQR(
     }
   }
 
-  // 4. Check medicine master barcode or id
-  for (const token of [code, parsed.gtinCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
-    const medByCode = medicines.find(
-      (m) =>
-        (m.barcode && m.barcode.toLowerCase() === token.toLowerCase()) ||
-        m.id.toLowerCase() === token.toLowerCase()
-    );
+  // 4. Check medicine master barcode or id (supporting GTIN-14, EAN-13, and tokens)
+  for (const token of [code, cleanCode, parsed.gtinCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
+    const tokenLower = token.toLowerCase();
+    const tokenClean = tokenLower.replace(/[^a-z0-9]/g, '');
+
+    const medByCode = medicines.find((m) => {
+      if (m.id.toLowerCase() === tokenLower) return true;
+      if (!m.barcode) return false;
+      const mBarcodeLower = m.barcode.toLowerCase();
+      const mBarcodeClean = mBarcodeLower.replace(/[^a-z0-9]/g, '');
+
+      if (mBarcodeClean === tokenClean) return true;
+      if (tokenClean.length === 14 && tokenClean.startsWith('0') && tokenClean.slice(1) === mBarcodeClean) return true;
+      if (mBarcodeClean.length === 14 && mBarcodeClean.startsWith('0') && mBarcodeClean.slice(1) === tokenClean) return true;
+      if (tokenClean.length >= 8 && mBarcodeClean.endsWith(tokenClean)) return true;
+      if (mBarcodeClean.length >= 8 && tokenClean.endsWith(mBarcodeClean)) return true;
+      return false;
+    });
+
     if (medByCode) {
       let selectedBatch = medByCode.batches[0];
-      if (parsed.expiryCandidate) {
+      if (parsed.batchCandidate) {
+        const cleanBatchCand = parsed.batchCandidate.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const matchByBatch = medByCode.batches.find(
+          (b) =>
+            b.batchNumber.toLowerCase() === parsed.batchCandidate!.toLowerCase() ||
+            b.batchNumber.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanBatchCand
+        );
+        if (matchByBatch) selectedBatch = matchByBatch;
+      } else if (parsed.expiryCandidate) {
         const matchByExp = medByCode.batches.find(
           (b) =>
             b.expiryDate.includes(parsed.expiryCandidate!) ||
@@ -255,12 +340,38 @@ function findMedicineByBarcodeOrQR(
     }
   }
 
-  // 5. GS1 DataMatrix matching (e.g. 0108901234001018...)
+  // 5. GS1 DataMatrix & GS1 Digital Link GTIN matching
   const gtin = parsed.gtinCandidate || (code.match(/01(\d{14})/) ? code.match(/01(\d{14})/)![1] : null);
   if (gtin) {
+    const gtinEan = gtin.length === 14 && gtin.startsWith('0') ? gtin.slice(1) : gtin;
     for (const med of medicines) {
+      const medMasterMatch =
+        med.barcode &&
+        (gtin.endsWith(med.barcode) ||
+          med.barcode.endsWith(gtin) ||
+          med.barcode.toLowerCase() === gtinEan.toLowerCase());
+
+      if (medMasterMatch) {
+        let selectedBatch = med.batches[0];
+        if (parsed.batchCandidate) {
+          const cleanBatchCand = parsed.batchCandidate.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const matchBatch = med.batches.find(
+            (b) =>
+              b.batchNumber.toLowerCase() === parsed.batchCandidate!.toLowerCase() ||
+              b.batchNumber.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanBatchCand
+          );
+          if (matchBatch) selectedBatch = matchBatch;
+        }
+        return { medicine: med, batch: selectedBatch, unitType: 'STRIP' as const };
+      }
+
       for (const b of med.batches) {
-        if (b.barcode && gtin.endsWith(b.barcode)) {
+        if (
+          b.barcode &&
+          (gtin.endsWith(b.barcode) ||
+            b.barcode.endsWith(gtin) ||
+            b.barcode.toLowerCase() === gtinEan.toLowerCase())
+        ) {
           return { medicine: med, batch: b, unitType: 'STRIP' as const };
         }
       }
@@ -548,6 +659,92 @@ async function runTests() {
     // Ensure other batch 'AUG99' was NOT added
     const hasOtherBatch = cart.some((i) => i.batchNumber === 'AUG99');
     assert.strictEqual(hasOtherBatch, false, 'Other batch AUG99 must NOT be added to the cart');
+  });
+
+  // Test 15: Resolve Emcure GS1 Digital Link QR code with wedge scanner spaces
+  runTest('15. Resolve Emcure GS1 QR code: "https://verify.emcure.com/validate/01 /08902319015572/10/E16GQ25017 /21/GOLABWISC57F"', () => {
+    const rawQr = 'https://verify.emcure.com/validate/01 /08902319015572/10/E16GQ25017 /21/GOLABWISC57F';
+    const parsed = parseCompoundBarcode(rawQr);
+
+    assert.strictEqual(parsed.gtinCandidate, '08902319015572', 'Must extract GTIN 08902319015572');
+    assert.strictEqual(parsed.batchCandidate, 'E16GQ25017', 'Must extract Batch E16GQ25017');
+    assert.strictEqual(parsed.serialCandidate, 'GOLABWISC57F', 'Must extract Serial GOLABWISC57F');
+    assert.ok(parsed.tokens.includes('8902319015572'), 'Tokens must include 13-digit EAN');
+
+    const match = findMedicineByBarcodeOrQR(rawQr);
+    assert.ok(match, 'Must resolve medicine from Emcure verification URL');
+    assert.strictEqual(match.medicine.id, 'med-003');
+    assert.strictEqual(match.medicine.name, 'Pause-500 (Tranexamic Acid Tablet)');
+    assert.ok(match.batch, 'Must resolve batch');
+    assert.strictEqual(match.batch.batchNumber, 'E16GQ25017', 'Must resolve exact batch E16GQ25017');
+  });
+
+  // Test 16: Direct Cart Auto-Add on scanning Emcure GS1 QR and standard URL variant
+  runTest('16. Direct cart auto-add on scanning Emcure GS1 QR URL (Pause 500 / E16GQ25017)', () => {
+    let cart: CartItem[] = [];
+    const rawQr = 'https://verify.emcure.com/validate/01 /08902319015572/10/E16GQ25017 /21/GOLABWISC57F';
+
+    const res = simulateScanAddToCart(cart, rawQr);
+    cart = res.cart;
+
+    assert.strictEqual(res.action, 'ADDED', 'Scan must successfully add item to cart');
+    assert.strictEqual(cart.length, 1, 'Cart must have 1 line item');
+    assert.strictEqual(cart[0].medicineName, 'Pause-500 (Tranexamic Acid Tablet)');
+    assert.strictEqual(cart[0].batchNumber, 'E16GQ25017');
+    assert.strictEqual(cart[0].quantity, 1);
+    assert.strictEqual(cart[0].mrp, 198.03);
+
+    // Standard unspaced URL variant
+    const standardUrl = 'https://verify.emcure.com/validate/01/08902319015572/10/E16GQ25017/21/GOLABWISC57F';
+    const match2 = findMedicineByBarcodeOrQR(standardUrl);
+    assert.ok(match2, 'Must resolve standard unspaced GS1 Digital Link URL');
+    assert.strictEqual(match2.medicine.id, 'med-003');
+    assert.strictEqual(match2.batch?.batchNumber, 'E16GQ25017');
+  });
+
+  // Test 17: Resolve raw GS1-128 DataMatrix stream on Pause 500 blister pack
+  runTest('17. Resolve raw GS1-128 stream: "01089023190155721729043010E16GQ25017"', () => {
+    const rawGs1 = '01089023190155721729043010E16GQ25017';
+    const parsed = parseCompoundBarcode(rawGs1);
+
+    assert.strictEqual(parsed.gtinCandidate, '08902319015572', 'Must extract GTIN 08902319015572');
+    assert.strictEqual(parsed.expiryCandidate, '2029-04-30', 'Must extract Expiry 2029-04-30');
+    assert.strictEqual(parsed.batchCandidate, 'E16GQ25017', 'Must extract Batch E16GQ25017');
+
+    const match = findMedicineByBarcodeOrQR(rawGs1);
+    assert.ok(match, 'Must resolve Pause 500 from raw GS1-128 stream');
+    assert.strictEqual(match.medicine.id, 'med-003');
+    assert.strictEqual(match.batch?.batchNumber, 'E16GQ25017');
+  });
+
+  // Test 18: Resolve printed blister pack text
+  runTest('18. Resolve blister pack printed text: "B.No. E16GQ25017 MFD. MAY 2025 EXP. APR. 2029 M.R.P. Rs. 198.03"', () => {
+    const blisterText = 'B.No. E16GQ25017 MFD. MAY 2025 EXP. APR. 2029 M.R.P. Rs. 198.03';
+    const parsed = parseCompoundBarcode(blisterText);
+
+    assert.strictEqual(parsed.batchCandidate, 'E16GQ25017', 'Must extract batch from B.No.');
+    assert.strictEqual(parsed.mrpCandidate, 198.03, 'Must extract MRP 198.03');
+
+    const match = findMedicineByBarcodeOrQR(blisterText);
+    assert.ok(match, 'Must resolve Pause 500 from blister pack text');
+    assert.strictEqual(match.medicine.id, 'med-003');
+    assert.strictEqual(match.batch?.batchNumber, 'E16GQ25017');
+  });
+
+  // Test 19: Resolve foil item code
+  runTest('19. Resolve packaging foil item code: "514443138IN04"', () => {
+    const match = findMedicineByBarcodeOrQR('514443138IN04');
+    assert.ok(match, 'Must resolve Pause 500 from packaging foil item code');
+    assert.strictEqual(match.medicine.id, 'med-003');
+    assert.strictEqual(match.batch?.batchNumber, 'E16GQ25017');
+  });
+
+  // Test 20: Resolve distributor sticker barcode
+  runTest('20. Resolve distributor sticker barcode: "23683"', () => {
+    const match = findMedicineByBarcodeOrQR('23683');
+    assert.ok(match, 'Must resolve Pause 500 from distributor sticker barcode');
+    assert.strictEqual(match.medicine.id, 'med-003');
+    assert.strictEqual(match.batch?.batchNumber, 'E16GQ25017');
   });
 
   console.log('\n========================================================================');

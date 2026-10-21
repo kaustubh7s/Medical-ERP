@@ -143,9 +143,9 @@ export const CompactMembershipRegistrationForm: React.FC<CompactMembershipRegist
       return targetExistingMember.membershipId;
     }
     const year = new Date().getFullYear();
-    const count = memberships.length + pendingMemberships.filter((p) => !p.isRenewal).length + 1;
-    return `${membershipSettings.idPrefix || 'MEM'}-${year}-${String(count).padStart(4, '0')}`;
-  }, [isRenewalMode, targetExistingMember, memberships.length, pendingMemberships, membershipSettings.idPrefix]);
+    const nextNum = (membershipSettings.nextNumber || 1000) + pendingMemberships.filter((p) => !p.isRenewal).length;
+    return `${membershipSettings.idPrefix || 'MEM'}-${year}-${String(nextNum).padStart(4, '0')}`;
+  }, [isRenewalMode, targetExistingMember, membershipSettings.nextNumber, pendingMemberships, membershipSettings.idPrefix]);
 
   // Handle plan select
   const handleSelectPlan = (planId: string) => {
@@ -185,8 +185,19 @@ export const CompactMembershipRegistrationForm: React.FC<CompactMembershipRegist
       return;
     }
 
+    const lowerName = trimmedName.toLowerCase();
+    if (lowerName.includes('walk-in') || lowerName.includes('walkin') || lowerName === 'walk in' || lowerName.includes('walk in customer')) {
+      setFormError('Walk-in customers cannot be registered as loyalty members. Walk-ins are only for recording counter sales.');
+      return;
+    }
+
     if (cleanPhone.length !== 10) {
       setFormError('Please enter a valid 10-digit mobile number.');
+      return;
+    }
+
+    if (cleanPhone === '0000000000' || cleanPhone === '9999999999' || /^(\d)\1{9}$/.test(cleanPhone)) {
+      setFormError('Please enter a valid individual 10-digit mobile number for membership.');
       return;
     }
 

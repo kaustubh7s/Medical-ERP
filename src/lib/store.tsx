@@ -339,8 +339,27 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         if (isInitial || !lastCloudSyncTimestampRef.current || cloudTimestamp !== lastCloudSyncTimestampRef.current) {
           isApplyingCloudSnapshotRef.current = true;
           const parsed = json.data;
-          if (Array.isArray(parsed.medicines)) setMedicines(parsed.medicines);
-          if (Array.isArray(parsed.customers)) setCustomers(parsed.customers);
+          if (Array.isArray(parsed.medicines)) {
+            const cloudMedIds = new Set(parsed.medicines.map((m: Medicine) => m.id));
+            const missingInitial = INITIAL_MEDICINES.filter((m) => !cloudMedIds.has(m.id));
+            setMedicines([...parsed.medicines, ...missingInitial]);
+          }
+
+          if (Array.isArray(parsed.customers)) {
+            setCustomers((localPrev) => {
+              const custMap = new Map<string, Customer>();
+              parsed.customers.forEach((c: Customer) => {
+                const k = (c.phone || '').replace(/\D/g, '') || c.id;
+                if (k) custMap.set(k, c);
+              });
+              localPrev.forEach((c) => {
+                const k = (c.phone || '').replace(/\D/g, '') || c.id;
+                if (!custMap.has(k)) custMap.set(k, c);
+              });
+              return Array.from(custMap.values());
+            });
+          }
+
           if (Array.isArray(parsed.suppliers)) setSuppliers(parsed.suppliers);
           if (Array.isArray(parsed.invoices)) setInvoices(parsed.invoices);
           if (Array.isArray(parsed.heldBills)) setHeldBills(parsed.heldBills);
@@ -354,14 +373,50 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
           if (Array.isArray(parsed.damagedStock)) setDamagedStock(parsed.damagedStock);
           if (Array.isArray(parsed.users)) setUsers(parsed.users);
           if (parsed.settings) setSettings(parsed.settings);
-          if (Array.isArray(parsed.memberships)) setMemberships(parsed.memberships);
-          if (parsed.membershipSettings) setMembershipSettings(parsed.membershipSettings);
+
+          if (Array.isArray(parsed.memberships)) {
+            setMemberships((localPrev) => {
+              const memMap = new Map<string, Membership>();
+              parsed.memberships.forEach((m: Membership) => {
+                const k = m.membershipId || m.id || m.customerPhone;
+                if (k) memMap.set(k, m);
+              });
+              localPrev.forEach((m) => {
+                const k = m.membershipId || m.id || m.customerPhone;
+                if (!memMap.has(k)) memMap.set(k, m);
+              });
+              return Array.from(memMap.values());
+            });
+          }
+
+          if (parsed.membershipSettings) {
+            setMembershipSettings((localPrev) => ({
+              ...parsed.membershipSettings,
+              nextNumber: Math.max(localPrev.nextNumber || 1000, parsed.membershipSettings.nextNumber || 1000),
+            }));
+          }
+
           if (Array.isArray(parsed.pendingMemberships)) setPendingMemberships(parsed.pendingMemberships);
           if (Array.isArray(parsed.auditLogs)) setAuditLogs(parsed.auditLogs);
-          if (Array.isArray(parsed.barcodeMappings)) setBarcodeMappings(parsed.barcodeMappings);
+          if (Array.isArray(parsed.barcodeMappings)) {
+            const existingCodes = new Set(parsed.barcodeMappings.map((m: BarcodeQRMapping) => m.code.toLowerCase()));
+            const missingInitial = INITIAL_BARCODE_MAPPINGS.filter((m) => !existingCodes.has(m.code.toLowerCase()));
+            setBarcodeMappings([...parsed.barcodeMappings, ...missingInitial]);
+          } else {
+            setBarcodeMappings(INITIAL_BARCODE_MAPPINGS);
+          }
 
           try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+            const mergedSnapshot = {
+              ...parsed,
+              medicines: Array.isArray(parsed.medicines)
+                ? [...parsed.medicines, ...INITIAL_MEDICINES.filter((im) => !parsed.medicines.some((m: Medicine) => m.id === im.id))]
+                : INITIAL_MEDICINES,
+              barcodeMappings: Array.isArray(parsed.barcodeMappings)
+                ? [...parsed.barcodeMappings, ...INITIAL_BARCODE_MAPPINGS.filter((im) => !parsed.barcodeMappings.some((m: BarcodeQRMapping) => m.code.toLowerCase() === im.code.toLowerCase()))]
+                : INITIAL_BARCODE_MAPPINGS,
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedSnapshot));
           } catch {}
 
           lastCloudSyncTimestampRef.current = cloudTimestamp;
@@ -418,7 +473,11 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.medicines) setMedicines(parsed.medicines);
+        if (parsed.medicines) {
+          const existingMedIds = new Set(parsed.medicines.map((m: Medicine) => m.id));
+          const missingInitial = INITIAL_MEDICINES.filter((m) => !existingMedIds.has(m.id));
+          setMedicines([...parsed.medicines, ...missingInitial]);
+        }
         if (parsed.customers) setCustomers(parsed.customers);
         if (parsed.suppliers) setSuppliers(parsed.suppliers);
         if (parsed.invoices) setInvoices(parsed.invoices);
@@ -486,15 +545,32 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Multi-System Live Sync Polling (every 8 seconds)
+  // Multi-System Live Sync Polling (every 4 seconds + on tab focus/visibility)
   useEffect(() => {
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && navigator.onLine) {
+        pullFromCloud(false);
+      }
+    };
+
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible' && navigator.onLine) {
         pullFromCloud(false);
       }
-    }, 8000);
+    }, 4000);
 
-    return () => clearInterval(interval);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleVisibilityOrFocus);
+      document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleVisibilityOrFocus);
+        document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      }
+    };
   }, [pullFromCloud]);
 
   // Save to LocalStorage & Debounced Auto-Push to Neon Cloud
@@ -1011,9 +1087,19 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
           }));
         }
 
-        // Link/update customer CRM record
+        // Link/update customer CRM record (strictly for named customers, never walk-in counter sales)
         setCustomers((prev) => {
+          const isWalkin =
+            !memDetails.customerName ||
+            memDetails.customerName.toLowerCase().includes('walk-in') ||
+            memDetails.customerName.toLowerCase().includes('walkin') ||
+            memDetails.customerName.toLowerCase() === 'walk in' ||
+            (invoiceData.customerId && invoiceData.customerId.startsWith('cust-walkin'));
+          if (isWalkin) return prev;
+
           const cleanPhone = memDetails.customerPhone.replace(/\D/g, '');
+          if (!cleanPhone || cleanPhone === '9999999999') return prev;
+
           const existing = prev.find((c) => c.phone.replace(/\D/g, '') === cleanPhone);
           if (existing) {
             return prev.map((c) =>
@@ -1094,8 +1180,13 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       })
     );
 
-    // Update Customer loyalty & dues (exclude membership fee from earning medicine loyalty points if pure membership)
-    if (invoiceData.customerId) {
+    // Update Customer loyalty & dues strictly for registered customers (never for walk-in sales)
+    const isWalkinSale =
+      !invoiceData.customerId ||
+      invoiceData.customerId.startsWith('cust-walkin') ||
+      (invoiceData.customerName && invoiceData.customerName.toLowerCase().includes('walk'));
+
+    if (invoiceData.customerId && !isWalkinSale) {
       setCustomers((prev) =>
         prev.map((c) => {
           if (c.id !== invoiceData.customerId) return c;
@@ -1469,11 +1560,17 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     };
     setCustomers((prev) => [...prev, newCust]);
     logAudit('CREATE', 'Customers', `Registered customer: ${newCust.name} (${newCust.phone})`);
+    setTimeout(() => {
+      pushToCloud();
+    }, 100);
     return newCust;
   };
 
   const updateCustomer = (id: string, updates: Partial<Customer>) => {
     setCustomers((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
+    setTimeout(() => {
+      pushToCloud();
+    }, 100);
   };
 
   const addSupplier = (sup: Omit<Supplier, 'id' | 'currentBalance'>) => {
@@ -1960,11 +2057,47 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       nextNumber: newNextNum,
     }));
 
+    // Ensure customer is reflected in CRM Customers table (excluding walk-in customers)
+    setCustomers((prev) => {
+      const isWalkin =
+        !data.customerName ||
+        data.customerName.toLowerCase().includes('walk-in') ||
+        data.customerName.toLowerCase().includes('walkin') ||
+        data.customerName.toLowerCase() === 'walk in' ||
+        (data.customerPhone && /^(\d)\1{9}$/.test(data.customerPhone));
+      if (isWalkin) return prev;
+
+      const cleanPhone = (data.customerPhone || '').replace(/\D/g, '');
+      if (!cleanPhone || cleanPhone === '9999999999') return prev;
+
+      const existing = prev.find((c) => (c.phone || '').replace(/\D/g, '') === cleanPhone);
+      if (!existing && cleanPhone) {
+        const newCust: Customer = {
+          id: data.customerId || `cust-${Date.now()}`,
+          name: data.customerName,
+          phone: data.customerPhone,
+          email: data.customerEmail,
+          address: data.customerAddress,
+          creditLimit: 5000,
+          currentDue: 0,
+          loyaltyPoints: 50,
+          doctorName: 'Self',
+          createdDate: nowStr.split(' ')[0],
+        };
+        return [newCust, ...prev];
+      }
+      return prev;
+    });
+
     logAudit(
       'CREATE',
       'Membership Module',
       `Registered new membership ${formattedId} for ${data.customerName} (${data.customerPhone}, ${data.durationLabel})`
     );
+
+    setTimeout(() => {
+      pushToCloud();
+    }, 100);
 
     return newMembership;
   };
@@ -2015,6 +2148,9 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         'Membership Module',
         `Renewed membership ${(updatedMember as Membership).membershipId} for ${(updatedMember as Membership).customerName} to ${(updatedMember as Membership).expiryDate}`
       );
+      setTimeout(() => {
+        pushToCloud();
+      }, 100);
     }
 
     return updatedMember;
@@ -2060,6 +2196,9 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         'Membership Module',
         `Extended membership ${(updatedMember as Membership).membershipId} for ${(updatedMember as Membership).customerName} by ${additionalDays} days`
       );
+      setTimeout(() => {
+        pushToCloud();
+      }, 100);
     }
 
     return updatedMember;
@@ -2102,6 +2241,9 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         'Membership Module',
         `Updated status for membership ${(targetMember as Membership).membershipId} (${(targetMember as Membership).customerName}) to ${status}`
       );
+      setTimeout(() => {
+        pushToCloud();
+      }, 100);
     }
   };
 
@@ -2115,6 +2257,9 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       })
     );
     logAudit('UPDATE', 'Membership Module', `Updated member profile details for ${id}`);
+    setTimeout(() => {
+      pushToCloud();
+    }, 100);
   };
 
   const updateMembershipSettings = (settingsUpdates: Partial<MembershipSettings>) => {
@@ -2132,6 +2277,9 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       updatedBy: `${currentUser.name} (${currentUser.role})`,
       auditLog: [auditEntry, ...(prev.auditLog || [])],
     }));
+    setTimeout(() => {
+      pushToCloud();
+    }, 100);
 
     logAudit('UPDATE', 'Membership Settings', `Modified membership discount & duration rules`, settingsUpdates);
   };
@@ -2403,11 +2551,28 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
   const findMedicineByBarcodeOrQR = (rawCode: string) => {
     if (!rawCode) return null;
     const code = rawCode.trim();
+    const cleanCode = code.replace(/\s+/g, '');
 
-    // 1. Check custom barcodeMappings (exact raw code match)
-    const customMap = barcodeMappings.find((m) => m.code.toLowerCase() === code.toLowerCase());
+    // Combine state medicines & mappings with initial catalog so newly added items are guaranteed accessible
+    const allMappings = [
+      ...barcodeMappings,
+      ...INITIAL_BARCODE_MAPPINGS.filter(
+        (im) => !barcodeMappings.some((m) => m.id === im.id || m.code.toLowerCase() === im.code.toLowerCase())
+      ),
+    ];
+    const allMedicines = [
+      ...medicines,
+      ...INITIAL_MEDICINES.filter((im) => !medicines.some((m) => m.id === im.id)),
+    ];
+
+    // 1. Check custom barcodeMappings (exact raw code match or whitespace-cleansed match)
+    const customMap = allMappings.find(
+      (m) =>
+        m.code.toLowerCase() === code.toLowerCase() ||
+        m.code.toLowerCase() === cleanCode.toLowerCase()
+    );
     if (customMap) {
-      const med = medicines.find((m) => m.id === customMap.medicineId);
+      const med = allMedicines.find((m) => m.id === customMap.medicineId);
       if (med) {
         const batch = customMap.batchNumber
           ? med.batches.find((b) => b.batchNumber === customMap.batchNumber) || med.batches[0]
@@ -2416,14 +2581,18 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // 2. Parse compound 2D QR / DataMatrix / Barcode payload (e.g. "UG-7721|EXP:2027-07-31|MRP:204.5")
+    // 2. Parse compound 2D QR / DataMatrix / GS1 Digital Link URL (e.g. "https://verify.emcure.com/.../01/.../10/...")
     const parsed = parseCompoundBarcode(code);
 
     // 2a. Check if any extracted token or batchCandidate matches barcodeMappings
     for (const token of [parsed.batchCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
-      const tokenMap = barcodeMappings.find((m) => m.code.toLowerCase() === token.toLowerCase());
+      const tokenMap = allMappings.find(
+        (m) =>
+          m.code.toLowerCase() === token.toLowerCase() ||
+          m.code.toLowerCase() === token.replace(/\s+/g, '').toLowerCase()
+      );
       if (tokenMap) {
-        const med = medicines.find((m) => m.id === tokenMap.medicineId);
+        const med = allMedicines.find((m) => m.id === tokenMap.medicineId);
         if (med) {
           const batch = tokenMap.batchNumber
             ? med.batches.find((b) => b.batchNumber === tokenMap.batchNumber) || med.batches[0]
@@ -2436,14 +2605,14 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     // 3. Batch candidate / token search in medicine batches
     const batchCandidates = Array.from(
       new Set(
-        [code, parsed.batchCandidate, ...parsed.tokens]
+        [code, cleanCode, parsed.batchCandidate, ...parsed.tokens]
           .filter(Boolean)
           .map((s) => (s as string).toLowerCase().trim())
       )
     );
 
     // 3a. Exact batch number or batch barcode match
-    for (const med of medicines) {
+    for (const med of allMedicines) {
       for (const b of med.batches) {
         const bNo = b.batchNumber.toLowerCase().trim();
         const bCode = (b.barcode || '').toLowerCase().trim();
@@ -2463,7 +2632,7 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     if (parsed.batchCandidate) {
       const cleanCandidate = parsed.batchCandidate.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-      for (const med of medicines) {
+      for (const med of allMedicines) {
         for (const b of med.batches) {
           const cleanBatch = b.batchNumber.toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -2495,16 +2664,40 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // 4. Check medicine master barcode or id
-    for (const token of [code, parsed.gtinCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
-      const medByCode = medicines.find(
-        (m) =>
-          (m.barcode && m.barcode.toLowerCase() === token.toLowerCase()) ||
-          m.id.toLowerCase() === token.toLowerCase()
-      );
+    // 4. Check medicine master barcode or id (supporting GTIN-14, EAN-13, and tokens)
+    for (const token of [code, cleanCode, parsed.gtinCandidate, ...parsed.tokens].filter(Boolean) as string[]) {
+      const tokenLower = token.toLowerCase();
+      const tokenClean = tokenLower.replace(/[^a-z0-9]/g, '');
+
+      const medByCode = allMedicines.find((m) => {
+        if (m.id.toLowerCase() === tokenLower) return true;
+        if (!m.barcode) return false;
+        const mBarcodeLower = m.barcode.toLowerCase();
+        const mBarcodeClean = mBarcodeLower.replace(/[^a-z0-9]/g, '');
+
+        if (mBarcodeClean === tokenClean) return true;
+        // Check 14-digit GTIN vs 13-digit EAN (strip leading zero)
+        if (tokenClean.length === 14 && tokenClean.startsWith('0') && tokenClean.slice(1) === mBarcodeClean) return true;
+        if (mBarcodeClean.length === 14 && mBarcodeClean.startsWith('0') && mBarcodeClean.slice(1) === tokenClean) return true;
+        // Substring / suffix match for packaging barcodes
+        if (tokenClean.length >= 8 && mBarcodeClean.endsWith(tokenClean)) return true;
+        if (mBarcodeClean.length >= 8 && tokenClean.endsWith(mBarcodeClean)) return true;
+        return false;
+      });
+
       if (medByCode) {
         let selectedBatch = medByCode.batches[0];
-        if (parsed.expiryCandidate) {
+
+        // If a batch candidate was extracted from the payload, match it first!
+        if (parsed.batchCandidate) {
+          const cleanBatchCand = parsed.batchCandidate.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const matchByBatch = medByCode.batches.find(
+            (b) =>
+              b.batchNumber.toLowerCase() === parsed.batchCandidate!.toLowerCase() ||
+              b.batchNumber.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanBatchCand
+          );
+          if (matchByBatch) selectedBatch = matchByBatch;
+        } else if (parsed.expiryCandidate) {
           const matchByExp = medByCode.batches.find(
             (b) =>
               b.expiryDate.includes(parsed.expiryCandidate!) ||
@@ -2521,12 +2714,38 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // 5. GS1 DataMatrix matching (e.g. 0108901234001018...)
+    // 5. GS1 DataMatrix & GS1 Digital Link GTIN matching
     const gtin = parsed.gtinCandidate || (code.match(/01(\d{14})/) ? code.match(/01(\d{14})/)![1] : null);
     if (gtin) {
-      for (const med of medicines) {
+      const gtinEan = gtin.length === 14 && gtin.startsWith('0') ? gtin.slice(1) : gtin;
+      for (const med of allMedicines) {
+        const medMasterMatch =
+          med.barcode &&
+          (gtin.endsWith(med.barcode) ||
+            med.barcode.endsWith(gtin) ||
+            med.barcode.toLowerCase() === gtinEan.toLowerCase());
+
+        if (medMasterMatch) {
+          let selectedBatch = med.batches[0];
+          if (parsed.batchCandidate) {
+            const cleanBatchCand = parsed.batchCandidate.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const matchBatch = med.batches.find(
+              (b) =>
+                b.batchNumber.toLowerCase() === parsed.batchCandidate!.toLowerCase() ||
+                b.batchNumber.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanBatchCand
+            );
+            if (matchBatch) selectedBatch = matchBatch;
+          }
+          return { medicine: med, batch: selectedBatch, unitType: 'STRIP' as const };
+        }
+
         for (const b of med.batches) {
-          if (b.barcode && gtin.endsWith(b.barcode)) {
+          if (
+            b.barcode &&
+            (gtin.endsWith(b.barcode) ||
+              b.barcode.endsWith(gtin) ||
+              b.barcode.toLowerCase() === gtinEan.toLowerCase())
+          ) {
             return { medicine: med, batch: b, unitType: 'STRIP' as const };
           }
         }

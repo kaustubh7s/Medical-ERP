@@ -118,9 +118,10 @@ export function useHandheldScanner({
           const totalDuration = timestamps.length >= 2 ? timestamps[timestamps.length - 1] - timestamps[0] : 0;
           const averageInterKey = timestamps.length >= 2 ? totalDuration / (timestamps.length - 1) : 0;
 
-          // Support phone Bluetooth scanners (latency up to 180ms per key) or compound strings or numeric barcodes
+          // Support phone Bluetooth scanners (latency up to 180ms per key) or compound strings or numeric barcodes or GS1 URLs
           const isHardwareScan = timestamps.length >= 2 && (averageInterKey <= Math.max(maxInterKeyDelayMs, 180) || totalDuration < 600);
-          const isCompoundBarcode = buffer.includes('|') || buffer.includes('EXP:') || buffer.includes('MRP:');
+          const isGs1Url = buffer.startsWith('http://') || buffer.startsWith('https://') || buffer.includes('/01/') || buffer.includes('/01 ') || buffer.includes('verify.') || buffer.includes('validate/') || buffer.startsWith('010890');
+          const isCompoundBarcode = buffer.includes('|') || buffer.includes('EXP:') || buffer.includes('MRP:') || isGs1Url;
           const isNumericBarcode = /^\d{8,14}$/.test(buffer);
 
           if (isHardwareScan || (!isInput && buffer.length >= 4) || isCompoundBarcode || isNumericBarcode) {
@@ -148,7 +149,7 @@ export function useHandheldScanner({
           const lastTimestamp = keyTimestampsRef.current[keyTimestampsRef.current.length - 1];
           const delta = now - lastTimestamp;
           // For phone Bluetooth apps, allow up to 450ms gap before breaking buffer
-          if (delta > maxInterKeyDelayMs * 3.5 && !bufferRef.current.includes('|')) {
+          if (delta > maxInterKeyDelayMs * 3.5 && !bufferRef.current.includes('|') && !bufferRef.current.startsWith('http')) {
             bufferRef.current = '';
             keyTimestampsRef.current = [];
           }
@@ -157,16 +158,18 @@ export function useHandheldScanner({
         bufferRef.current += e.key;
         keyTimestampsRef.current.push(now);
 
-        // Instant auto-trigger for phone apps without an Enter/Tab suffix (40ms for compound, 70ms for numeric)
+        // Instant auto-trigger for phone apps without an Enter/Tab suffix (40ms for compound/URL, 70ms for numeric)
         if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
         const currentBuf = bufferRef.current.trim();
-        const isCompound = currentBuf.includes('|') && (currentBuf.includes('EXP') || currentBuf.includes('MRP') || currentBuf.split('|').length >= 3);
+        const isCurrentGs1Url = currentBuf.startsWith('http://') || currentBuf.startsWith('https://') || currentBuf.includes('/01/') || currentBuf.includes('/01 ') || currentBuf.includes('verify.') || currentBuf.includes('validate/');
+        const isCompound = ((currentBuf.includes('|') && (currentBuf.includes('EXP') || currentBuf.includes('MRP') || currentBuf.split('|').length >= 3)) || isCurrentGs1Url);
         const isNumeric = /^\d{8,14}$/.test(currentBuf);
         const fastDelayMs = isCompound ? 40 : isNumeric ? 70 : 140;
 
         clearTimerRef.current = setTimeout(() => {
           const buf = bufferRef.current.trim();
-          if (buf.includes('|') && (buf.includes('EXP') || buf.includes('MRP') || buf.split('|').length >= 3)) {
+          const isBufGs1Url = buf.startsWith('http://') || buf.startsWith('https://') || buf.includes('/01/') || buf.includes('/01 ') || buf.includes('verify.') || buf.includes('validate/');
+          if (isBufGs1Url || (buf.includes('|') && (buf.includes('EXP') || buf.includes('MRP') || buf.split('|').length >= 3))) {
             triggerScan(buf, 'BLUETOOTH_PHONE', 40, 5);
           } else if (/^\d{8,14}$/.test(buf) || (!isInput && buf.length >= 4)) {
             triggerScan(buf, 'BLUETOOTH_PHONE', 70, 7);
@@ -180,7 +183,8 @@ export function useHandheldScanner({
     // 2. Intercept Paste / Broadcast events from phone companion apps
     const handlePaste = (e: ClipboardEvent) => {
       const text = e.clipboardData?.getData('text')?.trim();
-      if (text && (text.includes('|') || /^\d{8,14}$/.test(text) || text.startsWith('010890'))) {
+      const isTextGs1Url = text && (text.startsWith('http://') || text.startsWith('https://') || text.includes('/01/') || text.includes('/01 ') || text.includes('verify.') || text.includes('validate/'));
+      if (text && (text.includes('|') || /^\d{8,14}$/.test(text) || text.startsWith('010890') || isTextGs1Url)) {
         e.preventDefault();
         e.stopPropagation();
         triggerScan(text, 'BLUETOOTH_PHONE', 10, 1);
