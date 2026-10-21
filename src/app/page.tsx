@@ -45,11 +45,23 @@ function PharmacyApp() {
     setMounted(true);
   }, []);
 
-  // Global Keyboard Shortcuts Dispatcher (F1, F2, F3, F7, F9, F10, Cmd+K, Esc)
+  // Global Keyboard Shortcuts Dispatcher (Shift+F1..F10, Shift+K / Cmd+K, Esc)
   React.useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // ⌘K / Ctrl+K
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      const activeEl = document.activeElement;
+      const isTextEntry =
+        activeEl &&
+        (activeEl.tagName === 'TEXTAREA' ||
+          (activeEl.tagName === 'INPUT' &&
+            !['button', 'submit', 'checkbox', 'radio'].includes(
+              (activeEl as HTMLInputElement).type?.toLowerCase()
+            )));
+
+      // Shift+K / ⌘K / Ctrl+K (Quick Search & Command Palette)
+      if (
+        (e.shiftKey && (e.key === 'K' || e.key === 'k') && !isTextEntry) ||
+        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')
+      ) {
         e.preventDefault();
         setIsCommandOpen((prev) => !prev);
         return;

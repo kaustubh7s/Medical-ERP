@@ -68,6 +68,9 @@ import {
   Wifi,
   WifiOff,
   AlertTriangle,
+  Globe,
+  Settings as SettingsIcon,
+  Link2,
 } from 'lucide-react';
 import {
   getMembershipExpiryInfo,
@@ -216,6 +219,13 @@ export const POSBillingView: React.FC = () => {
   const terminalPollRef = useRef<NodeJS.Timeout | null>(null);
   const terminalEventSourceRef = useRef<EventSource | null>(null);
   const isFinalizingInvoiceRef = useRef<boolean>(false);
+
+  // Quick Terminal Switcher & Pairing Modal State
+  const [isQuickTerminalConfigOpen, setIsQuickTerminalConfigOpen] = useState(false);
+  const [quickTerminalUrl, setQuickTerminalUrl] = useState(settings.posTerminalBaseUrl || 'http://localhost:3001');
+  const [quickPairingCode, setQuickPairingCode] = useState('');
+  const [quickConfigMsg, setQuickConfigMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [terminalElapsedSeconds, setTerminalElapsedSeconds] = useState(0);
 
   // Held Bills Modal
   const [isHeldModalOpen, setIsHeldModalOpen] = useState(false);
@@ -579,7 +589,10 @@ export const POSBillingView: React.FC = () => {
             )));
 
       // 1. Shift+C = Search for customer (open Patient Directory / Khata Modal)
-      if (isShift && (e.key === 'C' || e.key === 'c') && !isOtherTextEntry) {
+      if (
+        ((isShift && (e.key === 'C' || e.key === 'c')) && !isOtherTextEntry) ||
+        (isCtrlOrCmd && (e.key === 'c' || e.key === 'C') && !isOtherTextEntry)
+      ) {
         e.preventDefault();
         if (isPaymentModalOpen) return;
         setRepeatSearchTerm('');
@@ -587,8 +600,12 @@ export const POSBillingView: React.FC = () => {
         return;
       }
 
-      // 2. Shift+A / Ctrl+A = Add medicine option (focus medicine search/scan input and open dropdown)
-      if ((isShift && (e.key === 'A' || e.key === 'a') && !isOtherTextEntry) || (isCtrlOrCmd && (e.key === 'a' || e.key === 'A'))) {
+      // 2. Shift+M = Search medical (focus medicine search/scan input and open dropdown)
+      // Also supports Shift+A / Ctrl+M / Ctrl+A as backward-compatible aliases
+      if (
+        ((isShift && (e.key === 'M' || e.key === 'm' || e.key === 'A' || e.key === 'a')) && !isOtherTextEntry) ||
+        (isCtrlOrCmd && (e.key === 'm' || e.key === 'M' || e.key === 'a' || e.key === 'A'))
+      ) {
         e.preventDefault();
         if (isPaymentModalOpen) return;
         setIsCustomerModalOpen(false);
@@ -603,21 +620,21 @@ export const POSBillingView: React.FC = () => {
       // Avoid intercepting remaining function keys if user is inside any modal
       if (isBatchModalOpen || isHeldModalOpen || isCustomerModalOpen || isPaymentModalOpen || repeatOrderModalOpen) return;
 
-      if (e.key === 'F2') {
+      if ((isShift && e.key === 'F2') || e.key === 'F2') {
         e.preventDefault();
         searchInputRef.current?.focus();
         setIsDropdownOpen(true);
-      } else if (e.key === 'F4') {
+      } else if ((isShift && e.key === 'F4') || e.key === 'F4' || (isCtrlOrCmd && e.key === 'F4')) {
         e.preventDefault();
         if (cart.length > 0) setIsPaymentModalOpen(true);
-      } else if (e.key === 'F5') {
+      } else if ((isShift && e.key === 'F5') || e.key === 'F5') {
         e.preventDefault();
         handleHoldCurrentBill();
-      } else if (e.key === 'F6') {
+      } else if ((isShift && e.key === 'F6') || e.key === 'F6') {
         e.preventDefault();
         setHeldHighlightedIndex(0);
         setIsHeldModalOpen(true);
-      } else if (e.key === 'F8') {
+      } else if ((isShift && e.key === 'F8') || e.key === 'F8') {
         e.preventDefault();
         handleClearCart();
       }
@@ -1313,11 +1330,35 @@ export const POSBillingView: React.FC = () => {
     setIsQuickEnrollOpen(false);
   };
 
+  // Keep quick terminal url in sync with settings
+  useEffect(() => {
+    if (settings.posTerminalBaseUrl) {
+      setQuickTerminalUrl(settings.posTerminalBaseUrl);
+    }
+  }, [settings.posTerminalBaseUrl]);
+
+  // Elapsed timer when terminal payment is dispatched
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    if (['REQUESTED', 'PROCESSING'].includes(terminalPaymentState)) {
+      setTerminalElapsedSeconds(0);
+      timer = setInterval(() => {
+        setTerminalElapsedSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setTerminalElapsedSeconds(0);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [terminalPaymentState]);
+
   // Check health and readiness of external Pine Labs terminal simulator
-  const checkTerminalHealthStatus = async () => {
+  const checkTerminalHealthStatus = async (overrideUrl?: string) => {
     setIsCheckingTerminalHealth(true);
     try {
-      const res = await fetch('/api/terminal/health', { cache: 'no-store' });
+      const targetUrl = (overrideUrl || settings.posTerminalBaseUrl || 'http://localhost:3001').trim().replace(/\/+$/, '');
+      const res = await fetch(`/api/terminal/health?baseUrl=${encodeURIComponent(targetUrl)}`, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setTerminalHealth(data);
@@ -1344,6 +1385,111 @@ export const POSBillingView: React.FC = () => {
       });
     } finally {
       setIsCheckingTerminalHealth(false);
+    }
+  };
+
+  // Quick Terminal Switcher Save / Ping
+  const handleSaveQuickTerminalConfig = async () => {
+    if (!quickTerminalUrl.trim()) return;
+    setIsTerminalActionLoading(true);
+    setQuickConfigMsg(null);
+    const cleanUrl = quickTerminalUrl.trim().replace(/\/+$/, '');
+
+    try {
+      const res = await fetch('/api/terminal/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseUrl: cleanUrl,
+          testConnection: true,
+        }),
+      });
+      const data = await res.json();
+
+      updateSettings({
+        posTerminalBaseUrl: cleanUrl,
+      });
+
+      if (data.health?.status === 'HEALTHY') {
+        setTerminalHealth(data.health);
+        setQuickConfigMsg({
+          type: 'success',
+          text: `Connected to ${data.health.simulator || 'Terminal'}! Status: ${data.health.terminalStatus}`,
+        });
+      } else {
+        await checkTerminalHealthStatus(cleanUrl);
+        setQuickConfigMsg({
+          type: 'info',
+          text: `Target saved. Status: ${data.health?.terminalStatus || 'Checking...'}`,
+        });
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error';
+      setQuickConfigMsg({
+        type: 'error',
+        text: `Failed: ${msg}`,
+      });
+    } finally {
+      setIsTerminalActionLoading(false);
+    }
+  };
+
+  // Quick One-Click Pairing with Terminal
+  const handleQuickPairWithTerminal = async () => {
+    setIsTerminalActionLoading(true);
+    setQuickConfigMsg(null);
+    const cleanUrl = quickTerminalUrl.trim().replace(/\/+$/, '');
+
+    try {
+      let codeToUse = quickPairingCode.trim();
+
+      // If no code entered, attempt to auto-fetch code from terminal simulator screen
+      if (!codeToUse) {
+        const codeRes = await fetch(`/api/terminal/pair?baseUrl=${encodeURIComponent(cleanUrl)}`);
+        const codeData = await codeRes.json();
+        if (codeData?.pairingCode) {
+          codeToUse = codeData.pairingCode;
+          setQuickPairingCode(codeData.pairingCode);
+        } else {
+          throw new Error(codeData?.error || 'Could not fetch pairing code from terminal screen. Please enter code manually.');
+        }
+      }
+
+      const pairRes = await fetch('/api/terminal/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseUrl: cleanUrl,
+          pairingCode: codeToUse,
+          clientName: 'CarePlus-Pharmacy-Counter-1',
+        }),
+      });
+
+      const pairData = await pairRes.json();
+      if (!pairRes.ok || !pairData.success) {
+        throw new Error(pairData.error || 'Pairing rejected by terminal. Check code.');
+      }
+
+      updateSettings({
+        posTerminalBaseUrl: cleanUrl,
+        posTerminalToken: pairData.token,
+        posTerminalIsPaired: true,
+      });
+
+      setQuickConfigMsg({
+        type: 'success',
+        text: `Device paired successfully! Secure token generated.`,
+      });
+      await checkTerminalHealthStatus(cleanUrl);
+      setTimeout(() => setIsQuickTerminalConfigOpen(false), 1500);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error';
+      setQuickConfigMsg({
+        type: 'error',
+        text: `Pairing failed: ${msg}`,
+      });
+    } finally {
+      setIsTerminalActionLoading(false);
     }
   };
 
@@ -1771,6 +1917,37 @@ export const POSBillingView: React.FC = () => {
     setShowQuickAddForm(false);
   };
 
+  // Keyboard navigation & quick confirmation inside Payment Checkout Modal (Shift+F4 / Enter)
+  useEffect(() => {
+    if (!isPaymentModalOpen) return;
+
+    const handlePaymentKeyDown = (e: KeyboardEvent) => {
+      const isShift = e.shiftKey;
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setIsPaymentModalOpen(false);
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      if (
+        ((isShift && e.key === 'F4') || e.key === 'F4' || (isCtrlOrCmd && e.key === 'F4') || e.key === 'Enter') &&
+        paymentMode !== 'POS_TERMINAL'
+      ) {
+        const activeTag = document.activeElement?.tagName;
+        if (e.key === 'Enter' && activeTag === 'TEXTAREA') return;
+
+        e.preventDefault();
+        handleCompleteSale();
+      }
+    };
+
+    window.addEventListener('keydown', handlePaymentKeyDown);
+    return () => window.removeEventListener('keydown', handlePaymentKeyDown);
+  }, [isPaymentModalOpen, paymentMode, handleCompleteSale]);
+
   return (
     <div className="w-full max-w-full overflow-x-hidden space-y-2.5">
       {/* 1. Fast Counter Barcode / Medicine Search Ribbon */}
@@ -1864,12 +2041,12 @@ export const POSBillingView: React.FC = () => {
                   setIsDropdownOpen(false);
                 }
               }}
-              placeholder="Shift+A / F2: Scan Barcode or type medicine brand name, salt (e.g. Dolo, Paracetamol)..."
+              placeholder="Shift+M / Shift+F2: Scan Barcode or type medicine brand name, salt (e.g. Dolo, Paracetamol)..."
               className="w-full pl-9 pr-24 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner"
             />
             <div className="absolute right-2 top-1.5 flex items-center gap-1">
-              <kbd className="kbd-shortcut text-[10px]">Shift+A</kbd>
-              <kbd className="kbd-shortcut text-[10px]">F2</kbd>
+              <kbd className="kbd-shortcut text-[10px]">Shift+M</kbd>
+              <kbd className="kbd-shortcut text-[10px]">Shift+F2</kbd>
             </div>
           </div>
 
@@ -2275,20 +2452,20 @@ export const POSBillingView: React.FC = () => {
           {/* Park Bill / Resume Bill Buttons */}
           <button
             onClick={handleHoldCurrentBill}
-            title="F5: Hold active bill"
+            title="Shift+F5: Hold active bill"
             className="flex items-center gap-1 px-2 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 text-xs font-bold"
           >
             <PauseCircle className="h-3.5 w-3.5 text-amber-600" />
-            <span>F5 Hold</span>
+            <span>Shift+F5 Hold</span>
           </button>
 
           <button
             onClick={() => setIsHeldModalOpen(true)}
-            title="F6: Resume parked bills"
+            title="Shift+F6: Resume parked bills"
             className="flex items-center gap-1 px-2 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 text-xs font-bold"
           >
             <PlayCircle className="h-3.5 w-3.5 text-blue-600" />
-            <span>F6 ({heldBills.length})</span>
+            <span>Shift+F6 ({heldBills.length})</span>
           </button>
 
           {/* Handheld Barcode Scanner Status & Diagnostic Pill (Desktop Only) */}
@@ -2548,10 +2725,10 @@ export const POSBillingView: React.FC = () => {
                     <p className="font-bold text-xs">Counter Billing Cart is Empty</p>
                     <p className="text-[11px] flex items-center justify-center gap-1.5 flex-wrap">
                       <span>Press</span>
-                      <kbd className="kbd-shortcut">Shift+A</kbd>
+                      <kbd className="kbd-shortcut">Shift+M</kbd>
                       <span>or</span>
-                      <kbd className="kbd-shortcut">F2</kbd>
-                      <span>to add medicine, or</span>
+                      <kbd className="kbd-shortcut">Shift+F2</kbd>
+                      <span>to search medical, or</span>
                       <kbd className="kbd-shortcut">Shift+C</kbd>
                       <span>to search customer.</span>
                     </p>
@@ -2852,7 +3029,7 @@ export const POSBillingView: React.FC = () => {
               className="px-3.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs md:text-sm flex items-center gap-1.5 shadow-sm disabled:opacity-40 shrink-0 whitespace-nowrap transition-colors"
             >
               <Printer className="h-4 w-4 shrink-0" />
-              <span>F4 Collect & Print</span>
+              <span>Shift+F4 Collect & Print</span>
             </button>
           </div>
         </div>
@@ -3166,7 +3343,7 @@ export const POSBillingView: React.FC = () => {
                 className="col-span-3 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 active:scale-[0.98] text-white text-xs font-black flex items-center justify-center gap-2 shadow-md transition-all"
               >
                 <Printer className="h-4 w-4" />
-                <span>Pay ₹{grandTotal.toFixed(2)} &amp; Print (F4)</span>
+                <span>Pay ₹{grandTotal.toFixed(2)} &amp; Print (Shift+F4)</span>
               </button>
             </div>
           </div>
@@ -3863,37 +4040,71 @@ export const POSBillingView: React.FC = () => {
 
           {/* Mode 5: PINE LABS POS TERMINAL */}
           {paymentMode === 'POS_TERMINAL' && (
-            <div className="p-4 bg-slate-900 text-white rounded-2xl border border-slate-800 space-y-3.5 shadow-lg">
+            <div className="p-4 bg-slate-900 text-white rounded-2xl border border-slate-800 space-y-3.5 shadow-xl">
               {/* Terminal Header & Device Meta */}
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+              <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-2">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20">
+                  <div className="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20 shadow-inner">
                     <SmartphoneNfc className="h-5 w-5" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-black tracking-wide uppercase text-slate-100">
-                      Pine Labs-style POS Terminal
-                    </h4>
-                    <p className="text-[10px] font-mono text-slate-400">
-                      Device ID: <span className="text-emerald-400 font-bold">{settings.posTerminalDeviceId || 'PINELABS-POS-M884'}</span>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-black tracking-wide uppercase text-slate-100">
+                        Pine Labs POS Terminal
+                      </h4>
+                      {((settings.posTerminalBaseUrl || '').includes('ngrok') || (settings.posTerminalBaseUrl || '').startsWith('https://')) ? (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-sky-950/80 text-sky-400 border border-sky-800 flex items-center gap-1">
+                          <Globe className="h-2.5 w-2.5" /> Remote Ngrok
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-slate-800 text-slate-400 border border-slate-700">
+                          Local Sim
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] font-mono text-slate-400 flex items-center gap-1.5 mt-0.5">
+                      <span>ID: <strong className="text-emerald-400">{settings.posTerminalDeviceId || 'PINELABS-POS-M884'}</strong></span>
+                      <span>•</span>
+                      <span className="truncate max-w-[200px]" title={settings.posTerminalBaseUrl || 'http://localhost:3001'}>
+                        {settings.posTerminalBaseUrl || 'http://localhost:3001'}
+                      </span>
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={checkTerminalHealthStatus}
+                    type="button"
+                    onClick={() => {
+                      setIsQuickTerminalConfigOpen((prev) => !prev);
+                      setQuickConfigMsg(null);
+                    }}
+                    title="Change Terminal URL or Pair Code"
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors border ${
+                      isQuickTerminalConfigOpen
+                        ? 'bg-emerald-600 text-white border-emerald-500'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                    }`}
+                  >
+                    <SettingsIcon className="h-3 w-3" />
+                    <span>{isQuickTerminalConfigOpen ? 'Close' : 'Switch / Pair'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => checkTerminalHealthStatus()}
                     disabled={isCheckingTerminalHealth}
                     title="Refresh device status"
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors border border-slate-700"
                   >
-                    <RefreshCw className={`h-3.5 w-3.5 ${isCheckingTerminalHealth ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`h-3.5 w-3.5 ${isCheckingTerminalHealth ? 'animate-spin text-emerald-400' : ''}`} />
                   </button>
+
                   <div
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 border ${
                       terminalHealth?.status === 'HEALTHY'
-                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                        : 'bg-rose-950 text-rose-400 border border-rose-800'
+                        ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                        : 'bg-rose-950 text-rose-400 border-rose-800'
                     }`}
                   >
                     <span
@@ -3901,21 +4112,102 @@ export const POSBillingView: React.FC = () => {
                         terminalHealth?.status === 'HEALTHY' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
                       }`}
                     />
-                    {terminalHealth?.status === 'HEALTHY' ? 'Connected' : 'Disconnected'}
+                    {terminalHealth?.status === 'HEALTHY' ? 'Connected' : 'Offline'}
                   </div>
                 </div>
               </div>
 
+              {/* Quick Remote Terminal Switcher & Pairing Inline Panel */}
+              {isQuickTerminalConfigOpen && (
+                <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-700/80 space-y-3 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase text-emerald-400 tracking-wider flex items-center gap-1.5">
+                      <Link2 className="h-3.5 w-3.5" />
+                      Configure POS Terminal Endpoint
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">Counter-1</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-300 block mb-1">
+                        Terminal Base URL (Local or Remote Ngrok Tunnel)
+                      </label>
+                      <input
+                        type="text"
+                        value={quickTerminalUrl}
+                        onChange={(e) => setQuickTerminalUrl(e.target.value)}
+                        placeholder="https://xxxx.ngrok-free.dev or http://localhost:3001"
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-200 text-xs font-mono focus:border-emerald-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-300 block mb-1">
+                          6-Digit Pairing Code (From Terminal Screen)
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={8}
+                          value={quickPairingCode}
+                          onChange={(e) => setQuickPairingCode(e.target.value)}
+                          placeholder="e.g. 800261 (or leave blank to auto-pair)"
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-emerald-400 text-xs font-mono font-bold focus:border-emerald-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="flex items-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={handleSaveQuickTerminalConfig}
+                          disabled={isTerminalActionLoading || !quickTerminalUrl.trim()}
+                          className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition-colors disabled:opacity-50"
+                        >
+                          Save URL
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleQuickPairWithTerminal}
+                          disabled={isTerminalActionLoading}
+                          className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow disabled:opacity-50"
+                        >
+                          {isTerminalActionLoading ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <span>Pair Now</span>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {quickConfigMsg && (
+                    <div
+                      className={`p-2 rounded-lg text-[11px] font-medium ${
+                        quickConfigMsg.type === 'success'
+                          ? 'bg-emerald-950/70 border border-emerald-800 text-emerald-300'
+                          : quickConfigMsg.type === 'info'
+                          ? 'bg-sky-950/70 border border-sky-800 text-sky-300'
+                          : 'bg-rose-950/70 border border-rose-800 text-rose-300'
+                      }`}
+                    >
+                      {quickConfigMsg.text}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Status Grid */}
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-0.5">
-                  <span className="text-[10px] text-slate-400 block font-medium">Merchant:</span>
+                  <span className="text-[10px] text-slate-400 block font-medium">Configured Merchant:</span>
                   <span className="font-bold text-slate-200 truncate block text-[11px]">
                     {settings.posTerminalMerchantName || 'CarePlus Pharmacy & Wellness'}
                   </span>
                 </div>
                 <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-0.5">
-                  <span className="text-[10px] text-slate-400 block font-medium">Device Readiness:</span>
+                  <span className="text-[10px] text-slate-400 block font-medium">Terminal Readiness:</span>
                   <span
                     className={`font-bold text-[11px] uppercase ${
                       terminalHealth?.terminalStatus === 'READY'
@@ -3929,19 +4221,19 @@ export const POSBillingView: React.FC = () => {
                   </span>
                 </div>
                 <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-0.5">
-                  <span className="text-[10px] text-slate-400 block font-medium">Current Invoice:</span>
+                  <span className="text-[10px] text-slate-400 block font-medium">Target Invoice:</span>
                   <span className="font-mono font-bold text-slate-200">
                     {`INV-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(5, '0')}`}
                   </span>
                 </div>
                 <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-0.5">
-                  <span className="text-[10px] text-slate-400 block font-medium">Payment Status:</span>
+                  <span className="text-[10px] text-slate-400 block font-medium">Payment State:</span>
                   <span
                     className={`font-mono font-black text-[11px] ${
                       terminalPaymentState === 'SUCCESS'
                         ? 'text-emerald-400'
                         : terminalPaymentState === 'PROCESSING' || terminalPaymentState === 'REQUESTED'
-                        ? 'text-amber-400'
+                        ? 'text-amber-400 animate-pulse'
                         : terminalPaymentState === 'FAILED' || terminalPaymentState === 'TIMED_OUT'
                         ? 'text-rose-400'
                         : 'text-slate-300'
@@ -3953,10 +4245,10 @@ export const POSBillingView: React.FC = () => {
               </div>
 
               {/* Exact Payable Amount Banner */}
-              <div className="p-3 rounded-xl bg-slate-800/90 border border-slate-700 flex justify-between items-center">
+              <div className="p-3 rounded-xl bg-slate-800/90 border border-slate-700 flex justify-between items-center shadow-inner">
                 <div>
                   <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
-                    Authoritative Bill Amount
+                    Payable Bill Total
                   </span>
                   <span className="text-[10px] text-slate-400">Includes all taxes, round-off & discounts</span>
                 </div>
@@ -3965,15 +4257,17 @@ export const POSBillingView: React.FC = () => {
                 </span>
               </div>
 
-              {/* In-Flight Waiting / Processing Banner */}
+              {/* In-Flight Waiting / Processing Banner with Live Timer */}
               {['REQUESTED', 'PROCESSING'].includes(terminalPaymentState) && (
-                <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-600/40 space-y-2 text-center animate-pulse">
+                <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-600/50 space-y-2.5 text-center shadow-lg">
                   <div className="flex items-center justify-center gap-2 text-amber-300 text-xs font-bold">
                     <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
-                    <span>Waiting for payment confirmation on POS Terminal...</span>
+                    <span>
+                      Waiting for Customer on POS Terminal ({terminalElapsedSeconds}s)...
+                    </span>
                   </div>
                   <p className="text-[11px] text-slate-300 font-sans">
-                    Ask patient to tap/insert card or scan Bharat UPI QR on terminal screen.
+                    Ask customer to tap contactless card, insert chip & PIN, or scan Bharat UPI QR on the terminal screen.
                   </p>
                   {activePaymentAttempt?.requestId && (
                     <p className="text-[9.5px] font-mono text-slate-400">
@@ -3981,11 +4275,13 @@ export const POSBillingView: React.FC = () => {
                     </p>
                   )}
                   <button
+                    type="button"
                     onClick={handleCancelTerminalPayment}
                     disabled={isTerminalActionLoading}
-                    className="mt-1 px-4 py-1.5 rounded-lg bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-xs transition-colors"
+                    className="mt-1 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-colors shadow flex items-center justify-center gap-1.5 mx-auto"
                   >
-                    Cancel Payment on Terminal
+                    <X className="h-3.5 w-3.5" />
+                    <span>Cancel Payment on Terminal</span>
                   </button>
                 </div>
               )}
@@ -4002,43 +4298,14 @@ export const POSBillingView: React.FC = () => {
                       <div className="space-y-2">
                         <p className="text-[11px] text-slate-300 pl-5">{terminalErrorMsg}</p>
                         {(terminalErrorMsg.toLowerCase().includes('token') ||
-                          terminalErrorMsg.toLowerCase().includes('unauthorized')) && (
+                          terminalErrorMsg.toLowerCase().includes('unauthorized') ||
+                          terminalErrorMsg.toLowerCase().includes('bearer')) && (
                           <div className="pl-5 pt-1">
                             <button
                               type="button"
-                              onClick={async () => {
-                                setIsTerminalActionLoading(true);
-                                setTerminalErrorMsg(null);
-                                try {
-                                  const cRes = await fetch('/api/terminal/pair');
-                                  const cData = await cRes.json();
-                                  if (cData?.pairingCode) {
-                                    const pRes = await fetch('/api/terminal/pair', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({
-                                        pairingCode: cData.pairingCode,
-                                        clientName: 'CarePlus-Pharmacy-Counter-1',
-                                      }),
-                                    });
-                                    const pData = await pRes.json();
-                                    if (pData?.token) {
-                                      updateSettings({
-                                        posTerminalToken: pData.token,
-                                        posTerminalIsPaired: true,
-                                      });
-                                      setTerminalPaymentState('IDLE');
-                                      await checkTerminalHealthStatus();
-                                    }
-                                  }
-                                } catch (e: any) {
-                                  setTerminalErrorMsg(`Auto-pair failed: ${e?.message || e}`);
-                                } finally {
-                                  setIsTerminalActionLoading(false);
-                                }
-                              }}
+                              onClick={handleQuickPairWithTerminal}
                               disabled={isTerminalActionLoading}
-                              className="px-3 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
+                              className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
                             >
                               <RefreshCw className={`h-3 w-3 ${isTerminalActionLoading ? 'animate-spin' : ''}`} />
                               <span>Auto-Fix & Re-Pair Terminal Now</span>
@@ -4062,6 +4329,7 @@ export const POSBillingView: React.FC = () => {
                   </p>
                   {activePaymentAttempt?.transactionId && (
                     <button
+                      type="button"
                       onClick={() =>
                         verifyAndFinalizeTerminalPayment(
                           activePaymentAttempt.transactionId!,
@@ -4081,6 +4349,7 @@ export const POSBillingView: React.FC = () => {
               {/* Primary Collect Action Button */}
               {!['REQUESTED', 'PROCESSING'].includes(terminalPaymentState) && (
                 <button
+                  type="button"
                   onClick={handleCollectPaymentOnTerminal}
                   disabled={isTerminalActionLoading || cart.length === 0 || grandTotal <= 0}
                   className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-black text-sm shadow-md transition-all flex items-center justify-center gap-2 active:scale-[0.99]"
@@ -4111,7 +4380,7 @@ export const POSBillingView: React.FC = () => {
                 ? `Confirm Khata Entry (Due: ₹${creditBalanceDue.toFixed(2)}) & Print Receipt`
                 : paymentMode === 'SPLIT'
                 ? `Confirm Split Bill (Cash: ₹${splitCash.toFixed(2)} + UPI: ₹${splitUpi.toFixed(2)}) & Print`
-                : 'Confirm & Print Tax Receipt (Enter)'}
+                : 'Confirm & Print Tax Receipt (Enter / Shift+F4)'}
             </button>
           )}
         </div>
@@ -4502,7 +4771,7 @@ export const POSBillingView: React.FC = () => {
               </div>
               <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">No Parked Bills in Queue</h4>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                When you are serving a customer and need to temporarily pause their bill, press <kbd className="kbd-shortcut">F5</kbd> to park it. Press <kbd className="kbd-shortcut">F6</kbd> anytime to resume.
+                When you are serving a customer and need to temporarily pause their bill, press <kbd className="kbd-shortcut">Shift+F5</kbd> to park it. Press <kbd className="kbd-shortcut">Shift+F6</kbd> anytime to resume.
               </p>
               <button
                 type="button"

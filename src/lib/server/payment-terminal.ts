@@ -20,17 +20,37 @@ export interface TerminalConfig {
   merchantName: string;
 }
 
-let activeTokenCache: string | null = null;
+export function getStoredConfig(): Partial<TerminalConfig> {
+  try {
+    const configFile = path.join(process.cwd(), 'data', 'terminal_config.json');
+    if (fs.existsSync(configFile)) {
+      const content = fs.readFileSync(configFile, 'utf-8');
+      return JSON.parse(content) || {};
+    }
+  } catch {}
+  return {};
+}
+
+export function saveTerminalConfig(config: Partial<TerminalConfig>) {
+  try {
+    const dir = path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const current = getStoredConfig();
+    const merged = { ...current, ...config, updatedAt: new Date().toISOString() };
+    const configFile = path.join(dir, 'terminal_config.json');
+    fs.writeFileSync(configFile, JSON.stringify(merged, null, 2), 'utf-8');
+  } catch {}
+}
 
 export function getStoredToken(): string | null {
-  if (activeTokenCache) return activeTokenCache;
   try {
     const tokenFile = path.join(process.cwd(), 'data', 'terminal_token.json');
     if (fs.existsSync(tokenFile)) {
       const content = fs.readFileSync(tokenFile, 'utf-8');
       const parsed = JSON.parse(content);
       if (parsed.token) {
-        activeTokenCache = parsed.token;
         return parsed.token;
       }
     }
@@ -39,7 +59,6 @@ export function getStoredToken(): string | null {
 }
 
 export function saveStoredToken(token: string) {
-  activeTokenCache = token;
   try {
     const dir = path.join(process.cwd(), 'data');
     if (!fs.existsSync(dir)) {
@@ -54,15 +73,41 @@ export function saveStoredToken(token: string) {
   } catch {}
 }
 
+export function buildTerminalHeaders(
+  token?: string,
+  extra?: Record<string, string>
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'ngrok-skip-browser-warning': 'true',
+    ...extra,
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 export function getTerminalConfig(): TerminalConfig {
+  const stored = getStoredConfig();
   return {
-    baseUrl: process.env.POS_TERMINAL_API_BASE_URL || 'http://localhost:3001',
+    baseUrl:
+      stored.baseUrl ||
+      process.env.POS_TERMINAL_API_BASE_URL ||
+      'http://localhost:3001',
     token:
-      process.env.POS_TERMINAL_TOKEN ||
       getStoredToken() ||
+      stored.token ||
+      process.env.POS_TERMINAL_TOKEN ||
       'pos_live_a835119957a4d1dad3bd47ebec98bad50494f51ee05a4292',
-    deviceId: process.env.POS_TERMINAL_DEVICE_ID || 'PINELABS-POS-M884',
-    merchantName: process.env.POS_TERMINAL_MERCHANT_NAME || 'CarePlus Pharmacy & Wellness',
+    deviceId:
+      stored.deviceId ||
+      process.env.POS_TERMINAL_DEVICE_ID ||
+      'PINELABS-POS-M884',
+    merchantName:
+      stored.merchantName ||
+      process.env.POS_TERMINAL_MERCHANT_NAME ||
+      'CarePlus Pharmacy & Wellness',
   };
 }
 
@@ -76,9 +121,7 @@ export async function checkTerminalHealth(customConfig?: Partial<TerminalConfig>
   try {
     const res = await fetch(url, {
       method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
+      headers: buildTerminalHeaders(),
       cache: 'no-store',
       // Short timeout so ERP UI remains responsive if simulator is offline
       signal: AbortSignal.timeout(4000),
@@ -132,7 +175,7 @@ export async function requestPairingCode(customConfig?: Partial<TerminalConfig>)
 
   const res = await fetch(url, {
     method: 'GET',
-    headers: { Accept: 'application/json' },
+    headers: buildTerminalHeaders(),
     cache: 'no-store',
     signal: AbortSignal.timeout(5000),
   });
@@ -154,10 +197,9 @@ export async function pairTerminal(pairingCode: string, clientName?: string, cus
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
+    headers: buildTerminalHeaders(undefined, {
       'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
+    }),
     body: JSON.stringify({
       pairingCode: pairingCode.trim(),
       clientName: clientName || 'CarePlus-Pharmacy-Counter-1',
@@ -220,14 +262,9 @@ export async function submitPaymentRequest(
     paymentMethod: payload.paymentMethod || 'CUSTOMER_CHOICE',
   };
 
-  const headers: Record<string, string> = {
+  const headers = buildTerminalHeaders(config.token, {
     'Content-Type': 'application/json',
-    Accept: 'application/json',
-  };
-
-  if (config.token) {
-    headers['Authorization'] = `Bearer ${config.token}`;
-  }
+  });
 
   const res = await fetch(url, {
     method: 'POST',
@@ -302,12 +339,7 @@ export async function getPaymentStatus(
   customConfig?: Partial<TerminalConfig>
 ): Promise<TerminalPaymentResponse> {
   const config = { ...getTerminalConfig(), ...customConfig };
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-  };
-  if (config.token) {
-    headers['Authorization'] = `Bearer ${config.token}`;
-  }
+  const headers = buildTerminalHeaders(config.token);
 
   // First try direct lookup by identifier (as transactionId)
   const directUrl = `${config.baseUrl.replace(/\/+$/, '')}/api/terminal/payment-requests/${encodeURIComponent(identifier)}`;
@@ -408,12 +440,7 @@ export async function cancelPayment(
   customConfig?: Partial<TerminalConfig>
 ): Promise<{ success: boolean; message?: string; status?: string; error?: string }> {
   const config = { ...getTerminalConfig(), ...customConfig };
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-  };
-  if (config.token) {
-    headers['Authorization'] = `Bearer ${config.token}`;
-  }
+  const headers = buildTerminalHeaders(config.token);
 
   let transactionId = identifier;
 

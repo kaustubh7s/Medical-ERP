@@ -85,10 +85,10 @@ export const Sidebar: React.FC = () => {
       label: 'Counter Operations',
       items: [
         { id: 'dashboard', label: '1. Dashboard Desk', icon: LayoutDashboard },
-        { id: 'pos', label: '2. POS Billing', icon: ShoppingCart, hotkey: 'F2', badge: heldBills.length > 0 ? `${heldBills.length} Parked` : undefined, badgeColor: 'amber' },
+        { id: 'pos', label: '2. POS Billing', icon: ShoppingCart, hotkey: 'Shift+F2', badge: heldBills.length > 0 ? `${heldBills.length} Parked` : undefined, badgeColor: 'amber' },
         { id: 'invoices', label: 'Sales Invoices', icon: Receipt },
         { id: 'sales-returns', label: '3. Sales Returns', icon: RotateCcw },
-        { id: 'day-closing', label: 'Day Closing Register', icon: CalendarCheck, hotkey: 'F9' },
+        { id: 'day-closing', label: 'Day Closing Register', icon: CalendarCheck, hotkey: 'Shift+F9' },
       ],
     },
     {

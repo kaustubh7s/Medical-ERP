@@ -151,15 +151,29 @@ export const SettingsBackupView: React.FC = () => {
     setIsPingingTerminal(true);
     setTerminalPairingMsg(null);
     try {
-      const res = await fetch('/api/terminal/health', { cache: 'no-store' });
+      const cleanUrl = posTerminalBaseUrl.trim().replace(/\/+$/, '');
+      // Sync config first so server immediately uses this URL
+      await fetch('/api/terminal/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseUrl: cleanUrl,
+          deviceId: posTerminalDeviceId.trim(),
+          merchantName: posTerminalMerchantName.trim(),
+        }),
+      });
+
+      const res = await fetch(`/api/terminal/health?baseUrl=${encodeURIComponent(cleanUrl)}`, { cache: 'no-store' });
       const data = await res.json();
       setTerminalHealthData(data);
       if (data.status === 'HEALTHY') {
+        const isRemote = cleanUrl.includes('ngrok') || cleanUrl.startsWith('https://');
         setTerminalPairingMsg({
           type: 'success',
-          text: `Connected to ${data.simulator} (${data.deviceId}) • Terminal Status: ${data.terminalStatus} • Paired: ${data.isPaired ? 'YES' : 'NO'}`,
+          text: `Connected to ${data.simulator} (${data.deviceId}) • Status: ${data.terminalStatus} • Paired: ${data.isPaired ? 'YES' : 'NO'}${isRemote ? ' (🌐 Remote Tunnel)' : ''}`,
         });
         updateSettings({
+          posTerminalBaseUrl: cleanUrl,
           posTerminalLastPingAt: new Date().toISOString(),
           posTerminalIsPaired: data.isPaired,
         });
@@ -184,7 +198,8 @@ export const SettingsBackupView: React.FC = () => {
   const handleRequestPairingCode = async () => {
     setIsPairingTerminal(true);
     try {
-      const res = await fetch('/api/terminal/pair');
+      const cleanUrl = posTerminalBaseUrl.trim().replace(/\/+$/, '');
+      const res = await fetch(`/api/terminal/pair?baseUrl=${encodeURIComponent(cleanUrl)}`);
       const data = await res.json();
       if (data.success && data.pairingCode) {
         setPairingCodeInput(data.pairingCode);
@@ -213,10 +228,12 @@ export const SettingsBackupView: React.FC = () => {
     setTerminalPairingMsg(null);
 
     try {
+      const cleanUrl = posTerminalBaseUrl.trim().replace(/\/+$/, '');
       const res = await fetch('/api/terminal/pair', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          baseUrl: cleanUrl,
           pairingCode: pairingCodeInput.trim(),
           clientName: 'CarePlus-Pharmacy-Counter-1',
         }),
@@ -264,8 +281,9 @@ export const SettingsBackupView: React.FC = () => {
     }
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanUrl = posTerminalBaseUrl.trim().replace(/\/+$/, '');
     updateSettings({
       storeName,
       tagline,
@@ -275,10 +293,23 @@ export const SettingsBackupView: React.FC = () => {
       drugLicenseNumber,
       gstNumber,
       invoiceFooterMessage,
-      posTerminalBaseUrl,
+      posTerminalBaseUrl: cleanUrl,
       posTerminalDeviceId,
       posTerminalMerchantName,
     });
+
+    try {
+      await fetch('/api/terminal/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseUrl: cleanUrl,
+          deviceId: posTerminalDeviceId.trim(),
+          merchantName: posTerminalMerchantName.trim(),
+        }),
+      });
+    } catch {}
+
     setSaveToast(true);
     setTimeout(() => setSaveToast(false), 3000);
   };
@@ -516,15 +547,22 @@ export const SettingsBackupView: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="text-xs font-bold block mb-1">Simulator API Base URL</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-bold block">Simulator API Base URL</label>
+              {(posTerminalBaseUrl.includes('ngrok') || posTerminalBaseUrl.startsWith('https://')) && (
+                <span className="text-[10px] font-bold text-sky-600 bg-sky-50 dark:bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-200 dark:border-sky-800">
+                  🌐 Remote
+                </span>
+              )}
+            </div>
             <input
               type="text"
               value={posTerminalBaseUrl}
               onChange={(e) => setPosTerminalBaseUrl(e.target.value)}
-              placeholder="http://localhost:3001"
+              placeholder="http://localhost:3001 or https://xxxx.ngrok-free.dev"
               className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono"
             />
-            <span className="text-[10px] text-slate-400 mt-1 block">Default local dev: http://localhost:3001</span>
+            <span className="text-[10px] text-slate-400 mt-1 block">Local: http://localhost:3001 | Remote: https://xxxx.ngrok-free.dev</span>
           </div>
 
           <div>

@@ -119,18 +119,18 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   // Complete List of All 26 ERP Modules Grouped
   const allModules: NavItem[] = [
     // Counter Operations
-    { id: 'dashboard', label: 'Dashboard Desk', shortLabel: 'Desk', icon: LayoutDashboard, hotkey: 'F1', category: 'Counter Operations' },
-    { id: 'pos', label: 'POS Counter Billing', shortLabel: 'POS', icon: ShoppingCart, hotkey: 'F2', badge: heldBills.length > 0 ? `${heldBills.length} Parked` : undefined, badgeColor: 'amber', category: 'Counter Operations' },
-    { id: 'invoices', label: 'Sales Invoices', shortLabel: 'Invoices', icon: Receipt, hotkey: 'F7', category: 'Counter Operations' },
+    { id: 'dashboard', label: 'Dashboard Desk', shortLabel: 'Desk', icon: LayoutDashboard, hotkey: 'Shift+F1', category: 'Counter Operations' },
+    { id: 'pos', label: 'POS Counter Billing', shortLabel: 'POS', icon: ShoppingCart, hotkey: 'Shift+F2', badge: heldBills.length > 0 ? `${heldBills.length} Parked` : undefined, badgeColor: 'amber', category: 'Counter Operations' },
+    { id: 'invoices', label: 'Sales Invoices', shortLabel: 'Invoices', icon: Receipt, hotkey: 'Shift+F7', category: 'Counter Operations' },
     { id: 'sales-returns', label: 'Sales Returns', shortLabel: 'Returns', icon: RotateCcw, category: 'Counter Operations' },
-    { id: 'day-closing', label: 'Day Closing & Cash Register', shortLabel: 'Day Closing', icon: CalendarCheck, hotkey: 'F9', category: 'Counter Operations' },
+    { id: 'day-closing', label: 'Day Closing & Cash Register', shortLabel: 'Day Closing', icon: CalendarCheck, hotkey: 'Shift+F9', category: 'Counter Operations' },
 
     // Membership & Loyalty
     { id: 'membership', label: 'Customer Membership Club', shortLabel: 'Club', icon: Crown, badge: expiringMembersCount > 0 ? `${expiringMembersCount} Alert` : undefined, badgeColor: 'purple', category: 'Customer Membership' },
 
     // Inventory & Expiry
-    { id: 'inventory', label: 'Inventory & Racks', shortLabel: 'Stock', icon: Boxes, hotkey: 'F10', badge: lowStockCount > 0 ? `${lowStockCount} Low` : undefined, badgeColor: 'rose', category: 'Inventory & Expiry' },
-    { id: 'medicines', label: 'Medicine Master', shortLabel: 'Medicines', icon: Pill, hotkey: 'F3', category: 'Inventory & Expiry' },
+    { id: 'inventory', label: 'Inventory & Racks', shortLabel: 'Stock', icon: Boxes, hotkey: 'Shift+F10', badge: lowStockCount > 0 ? `${lowStockCount} Low` : undefined, badgeColor: 'rose', category: 'Inventory & Expiry' },
+    { id: 'medicines', label: 'Medicine Master', shortLabel: 'Medicines', icon: Pill, hotkey: 'Shift+F3', category: 'Inventory & Expiry' },
     { id: 'expiry', label: 'Expiry & Near-Expiry Radar', shortLabel: 'Expiry', icon: Clock, badge: nearExpiryCount > 0 ? `${nearExpiryCount} Alert` : undefined, badgeColor: 'amber', category: 'Inventory & Expiry' },
     { id: 'stock-analysis', label: 'Stock Fast/Slow Analysis', shortLabel: 'Stock Flow', icon: TrendingUp, category: 'Inventory & Expiry' },
 

@@ -337,7 +337,7 @@ export const HandheldScannerWidget: React.FC<HandheldScannerWidgetProps> = ({
                 <strong>Compound 2D Barcodes</strong>: Supports Indian pharma QR codes like <code className="font-mono bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded text-blue-900 dark:text-blue-200">UG-7721|EXP:2027-07-31|MRP:204.5</code>.
               </li>
               <li>
-                <strong>Instant Test</strong>: You can also click the box above or press <kbd className="font-bold bg-white dark:bg-slate-800 px-1 rounded border">Shift+A</kbd> in POS and scan directly.
+                <strong>Instant Test</strong>: You can also click the box above or press <kbd className="font-bold bg-white dark:bg-slate-800 px-1 rounded border">Shift+M</kbd> in POS and scan directly.
               </li>
             </ul>
           </div>

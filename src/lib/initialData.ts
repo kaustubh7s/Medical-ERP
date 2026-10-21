@@ -31,7 +31,7 @@ export const INITIAL_SETTINGS: PharmacySettings = {
   enableSoundAlerts: true,
   thermalPrintAutoOpen: true,
   currencySymbol: '₹',
-  posTerminalBaseUrl: 'http://localhost:3001',
+  posTerminalBaseUrl: 'https://unerosive-melanie-defective.ngrok-free.dev',
   posTerminalDeviceId: 'PINELABS-POS-M884',
   posTerminalMerchantName: 'CarePlus Pharmacy & Wellness',
   posTerminalToken: 'pos_live_a835119957a4d1dad3bd47ebec98bad50494f51ee05a4292',

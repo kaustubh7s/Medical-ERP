@@ -13,6 +13,7 @@ export async function GET() {
         (SELECT COUNT(*) FROM pharmacy_medicines) as medicines_count,
         (SELECT COUNT(*) FROM pharmacy_customers) as customers_count,
         (SELECT COUNT(*) FROM pharmacy_invoices) as invoices_count,
+        (SELECT COUNT(*) FROM pharmacy_memberships) as memberships_count,
         (SELECT updated_at FROM pharmacy_sync_state WHERE key = 'careplus_erp_live' LIMIT 1) as last_synced_at
     `;
 

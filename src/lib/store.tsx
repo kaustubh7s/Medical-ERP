@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import {
   Medicine,
   Batch,
@@ -195,6 +195,11 @@ interface PharmacyStoreContextType {
   resetToDemoData: () => void;
   importDataBackup: (jsonString: string) => boolean;
   exportDataBackup: () => string;
+
+  // Cloud Database Synchronization
+  cloudSyncStatus: 'CONNECTED' | 'SYNCING' | 'OFFLINE' | 'IDLE' | 'ERROR';
+  lastCloudSyncedAt: string | null;
+  syncWithCloudNow: () => Promise<boolean>;
 }
 
 const PharmacyContext = createContext<PharmacyStoreContextType | null>(null);
@@ -229,20 +234,173 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [isOnline, setIsOnline] = useState<boolean>(() => (typeof window !== 'undefined' ? navigator.onLine : true));
   const [offlineQueue, setOfflineQueue] = useState<SalesInvoice[]>([]);
 
   // Barcode & QR Mapping State
   const [barcodeMappings, setBarcodeMappings] = useState<BarcodeQRMapping[]>(INITIAL_BARCODE_MAPPINGS);
 
+  // Cloud Database Synchronization State & Refs
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'CONNECTED' | 'SYNCING' | 'OFFLINE' | 'IDLE' | 'ERROR'>('IDLE');
+  const [lastCloudSyncedAt, setLastCloudSyncedAt] = useState<string | null>(null);
+  const lastCloudSyncTimestampRef = useRef<string | null>(null);
+  const isSyncingRef = useRef<boolean>(false);
+  const isApplyingCloudSnapshotRef = useRef<boolean>(false);
+  const autoSyncDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const latestStateRef = useRef<any>({});
+
+  // Continuously update state snapshot ref without triggering re-renders
+  latestStateRef.current = {
+    medicines,
+    customers,
+    suppliers,
+    invoices,
+    heldBills,
+    salesReturns,
+    purchases,
+    purchaseReturns,
+    expenses,
+    payments,
+    cashDrawerTransactions,
+    dayClosingRecords,
+    damagedStock,
+    users,
+    settings,
+    memberships,
+    membershipSettings,
+    pendingMemberships,
+    auditLogs,
+    barcodeMappings,
+    cashierName: settings?.storeName || currentUser?.name || 'CarePlus Admin',
+  };
+
+  // Push state snapshot to Neon Cloud Database (stable callback)
+  const pushToCloud = useCallback(async (customPayload?: any): Promise<boolean> => {
+    if (typeof window === 'undefined' || !navigator.onLine) {
+      setCloudSyncStatus('OFFLINE');
+      return false;
+    }
+    if (isSyncingRef.current || isApplyingCloudSnapshotRef.current) return false;
+
+    isSyncingRef.current = true;
+    setCloudSyncStatus('SYNCING');
+
+    try {
+      const state = latestStateRef.current || {};
+      const payload = customPayload || {
+        version: '3.0.0',
+        exportedAt: new Date().toISOString(),
+        ...state,
+      };
+
+      const res = await fetch('/api/neon/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: payload,
+          cashierName: state.cashierName || 'CarePlus Admin',
+        }),
+      });
+
+      const json = await res.json();
+      if (json.success) {
+        setCloudSyncStatus('CONNECTED');
+        const timestamp = json.syncedAt || new Date().toISOString();
+        setLastCloudSyncedAt(timestamp);
+        lastCloudSyncTimestampRef.current = timestamp;
+        return true;
+      } else {
+        setCloudSyncStatus('ERROR');
+        return false;
+      }
+    } catch (err) {
+      console.error('Failed to auto-sync to Neon DB', err);
+      setCloudSyncStatus('ERROR');
+      return false;
+    } finally {
+      isSyncingRef.current = false;
+    }
+  }, []);
+
+  // Pull latest snapshot from Neon Cloud Database
+  const pullFromCloud = useCallback(async (isInitial = false): Promise<boolean> => {
+    if (typeof window === 'undefined' || !navigator.onLine) {
+      setCloudSyncStatus('OFFLINE');
+      return false;
+    }
+    if (isSyncingRef.current) return false;
+
+    try {
+      const res = await fetch('/api/neon/sync', { cache: 'no-store' });
+      const json = await res.json();
+
+      if (json.hasData && json.data) {
+        const cloudTimestamp = json.updatedAt;
+        if (isInitial || !lastCloudSyncTimestampRef.current || cloudTimestamp !== lastCloudSyncTimestampRef.current) {
+          isApplyingCloudSnapshotRef.current = true;
+          const parsed = json.data;
+          if (Array.isArray(parsed.medicines)) setMedicines(parsed.medicines);
+          if (Array.isArray(parsed.customers)) setCustomers(parsed.customers);
+          if (Array.isArray(parsed.suppliers)) setSuppliers(parsed.suppliers);
+          if (Array.isArray(parsed.invoices)) setInvoices(parsed.invoices);
+          if (Array.isArray(parsed.heldBills)) setHeldBills(parsed.heldBills);
+          if (Array.isArray(parsed.salesReturns)) setSalesReturns(parsed.salesReturns);
+          if (Array.isArray(parsed.purchases)) setPurchases(parsed.purchases);
+          if (Array.isArray(parsed.purchaseReturns)) setPurchaseReturns(parsed.purchaseReturns);
+          if (Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
+          if (Array.isArray(parsed.payments)) setPayments(parsed.payments);
+          if (Array.isArray(parsed.cashDrawerTransactions)) setCashDrawerTransactions(parsed.cashDrawerTransactions);
+          if (Array.isArray(parsed.dayClosingRecords)) setDayClosingRecords(parsed.dayClosingRecords);
+          if (Array.isArray(parsed.damagedStock)) setDamagedStock(parsed.damagedStock);
+          if (Array.isArray(parsed.users)) setUsers(parsed.users);
+          if (parsed.settings) setSettings(parsed.settings);
+          if (Array.isArray(parsed.memberships)) setMemberships(parsed.memberships);
+          if (parsed.membershipSettings) setMembershipSettings(parsed.membershipSettings);
+          if (Array.isArray(parsed.pendingMemberships)) setPendingMemberships(parsed.pendingMemberships);
+          if (Array.isArray(parsed.auditLogs)) setAuditLogs(parsed.auditLogs);
+          if (Array.isArray(parsed.barcodeMappings)) setBarcodeMappings(parsed.barcodeMappings);
+
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          } catch {}
+
+          lastCloudSyncTimestampRef.current = cloudTimestamp;
+          setLastCloudSyncedAt(cloudTimestamp);
+          setCloudSyncStatus('CONNECTED');
+
+          setTimeout(() => {
+            isApplyingCloudSnapshotRef.current = false;
+          }, 400);
+        }
+        return true;
+      } else if (!json.hasData) {
+        setCloudSyncStatus('SYNCING');
+        setTimeout(() => {
+          pushToCloud();
+        }, 1000);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to pull from Neon DB', err);
+      setCloudSyncStatus('ERROR');
+      return false;
+    }
+  }, [pushToCloud]);
 
   // Online / Offline Listeners
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      setIsOnline(true);
+      setCloudSyncStatus('CONNECTED');
+      pullFromCloud(true);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setCloudSyncStatus('OFFLINE');
+    };
 
     if (typeof window !== 'undefined') {
-      setIsOnline(navigator.onLine);
       window.addEventListener('online', handleOnline);
       window.addEventListener('offline', handleOffline);
     }
@@ -252,9 +410,9 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         window.removeEventListener('offline', handleOffline);
       }
     };
-  }, []);
+  }, [pullFromCloud]);
 
-  // Load from LocalStorage
+  // Load from LocalStorage on Mount + Immediate Initial Cloud Pull
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -291,12 +449,27 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
           setBarcodeMappings(INITIAL_BARCODE_MAPPINGS);
         }
       } else {
-        // First-time initialize with INITIAL_SALES_RETURNS and INITIAL_BARCODE_MAPPINGS
         setSalesReturns(INITIAL_SALES_RETURNS);
         setBarcodeMappings(INITIAL_BARCODE_MAPPINGS);
       }
 
-      // Default to Light Mode unless explicitly set to dark
+      // Sync active POS terminal server endpoint
+      if (typeof window !== 'undefined') {
+        fetch('/api/terminal/config')
+          .then((r) => r.json())
+          .then((cfg) => {
+            if (cfg?.success && cfg.baseUrl) {
+              setSettings((prev) => ({
+                ...prev,
+                posTerminalBaseUrl: cfg.baseUrl,
+                posTerminalDeviceId: cfg.deviceId || prev.posTerminalDeviceId,
+                posTerminalMerchantName: cfg.merchantName || prev.posTerminalMerchantName,
+              }));
+            }
+          })
+          .catch(() => {});
+      }
+
       const savedTheme = localStorage.getItem('apex_theme_mode');
       if (savedTheme === 'dark') {
         setDarkMode(true);
@@ -309,10 +482,22 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       console.error('Failed to load state from localStorage', e);
     } finally {
       setIsLoaded(true);
+      pullFromCloud(true);
     }
   }, []);
 
-  // Save to LocalStorage on changes
+  // Multi-System Live Sync Polling (every 8 seconds)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && navigator.onLine) {
+        pullFromCloud(false);
+      }
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [pullFromCloud]);
+
+  // Save to LocalStorage & Debounced Auto-Push to Neon Cloud
   useEffect(() => {
     if (!isLoaded) return;
     try {
@@ -339,6 +524,17 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         barcodeMappings,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+
+      if (!isApplyingCloudSnapshotRef.current && navigator.onLine) {
+        if (autoSyncDebounceTimerRef.current) {
+          clearTimeout(autoSyncDebounceTimerRef.current);
+        }
+        autoSyncDebounceTimerRef.current = setTimeout(() => {
+          if (!isApplyingCloudSnapshotRef.current) {
+            pushToCloud();
+          }
+        }, 1500);
+      }
     } catch (e) {
       console.error('Failed to save state to localStorage', e);
     }
@@ -364,6 +560,7 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     pendingMemberships,
     auditLogs,
     barcodeMappings,
+    pushToCloud,
   ]);
 
   // Compute Notifications
@@ -2466,6 +2663,11 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         resetToDemoData,
         importDataBackup,
         exportDataBackup,
+
+        // Cloud Database Synchronization
+        cloudSyncStatus,
+        lastCloudSyncedAt,
+        syncWithCloudNow: () => pullFromCloud(true),
       }}
     >
       {children}

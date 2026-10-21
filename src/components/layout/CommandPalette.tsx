@@ -28,7 +28,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
   const activeItemRef = useRef<HTMLDivElement | HTMLButtonElement>(null);
 
   const quickActions = [
-    { label: 'New POS Billing (F2)', icon: ShoppingCart, tab: 'pos' },
+    { label: 'New POS Billing (Shift+F2)', icon: ShoppingCart, tab: 'pos' },
     { label: 'Customer Membership & Loyalty', icon: Users, tab: 'membership' },
     { label: 'Medicine Master Catalog', icon: Pill, tab: 'medicines' },
     { label: 'Live Inventory & Batches', icon: Boxes, tab: 'inventory' },
@@ -65,7 +65,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if (
+        (e.shiftKey && (e.key === 'K' || e.key === 'k')) ||
+        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')
+      ) {
         e.preventDefault();
         onClose();
         return;
@@ -92,7 +95,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
           }
         }
       }
-      if (e.key === 'F2') {
+      if ((e.shiftKey && e.key === 'F2') || e.key === 'F2') {
         e.preventDefault();
         setActiveTab('pos');
         onClose();

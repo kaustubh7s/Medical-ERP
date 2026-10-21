@@ -41,6 +41,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCommand, onOpenNotificatio
     offlineQueueCount,
     toggleNetworkSimulation,
     syncOfflineQueue,
+    cloudSyncStatus,
+    lastCloudSyncedAt,
+    syncWithCloudNow,
   } = usePharmacy();
 
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
@@ -68,36 +71,58 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCommand, onOpenNotificatio
             <span className="truncate">Search medicines, batches, bills...</span>
           </div>
           <kbd className="hidden sm:inline-flex items-center gap-0.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">
-            <Command className="h-3 w-3" /> K
+            Shift + K
           </kbd>
         </button>
 
-        {/* Quick Launch POS Billing (F2) */}
+        {/* Quick Launch POS Billing (Shift+F2) */}
         <button
           onClick={() => setActiveTab('pos')}
           className="hidden lg:inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white px-3.5 py-2 text-xs font-bold shadow-sm shadow-emerald-600/20 transition-all active:scale-95"
         >
           <ShoppingCart className="h-4 w-4" />
           <span>New Sale (POS)</span>
-          <span className="rounded bg-black/20 px-1.5 py-0.5 text-[10px]">F2</span>
+          <span className="rounded bg-black/20 px-1.5 py-0.5 text-[10px]">Shift+F2</span>
         </button>
       </div>
 
       {/* Right Action Icons & User Switcher */}
       <div className="flex items-center gap-2.5 md:gap-3.5">
-        {/* System Online / Offline Status Pill with Simulator Toggle */}
+        {/* Neon Cloud Database Live Sync Status Pill */}
         <div className="flex items-center gap-1.5">
           <button
-            onClick={toggleNetworkSimulation}
-            title={isOnline ? 'Simulate Offline Mode (Internet Disconnected)' : 'Simulate Online Reconnect'}
+            onClick={() => syncWithCloudNow()}
+            title={
+              cloudSyncStatus === 'CONNECTED'
+                ? `Neon Cloud PostgreSQL: Connected & Synced (Last: ${lastCloudSyncedAt ? new Date(lastCloudSyncedAt).toLocaleTimeString() : 'Just now'}) — Click to Refresh`
+                : cloudSyncStatus === 'SYNCING'
+                ? 'Syncing with Neon Cloud PostgreSQL...'
+                : 'Click to Reconnect & Sync with Neon Cloud'
+            }
             className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold border transition-all cursor-pointer ${
-              isOnline
+              cloudSyncStatus === 'CONNECTED'
                 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+                : cloudSyncStatus === 'SYNCING'
+                ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/40 hover:bg-blue-500/25 animate-pulse'
                 : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40 hover:bg-amber-500/25 animate-pulse'
             }`}
           >
-            <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-            <span>{isOnline ? 'Cloud Synced' : 'Offline Cache'}</span>
+            <span
+              className={`h-2 w-2 rounded-full ${
+                cloudSyncStatus === 'CONNECTED'
+                  ? 'bg-emerald-500 animate-pulse'
+                  : cloudSyncStatus === 'SYNCING'
+                  ? 'bg-blue-500 animate-spin'
+                  : 'bg-amber-500'
+              }`}
+            />
+            <span>
+              {cloudSyncStatus === 'CONNECTED'
+                ? 'Neon DB Synced'
+                : cloudSyncStatus === 'SYNCING'
+                ? 'Syncing DB...'
+                : 'Offline Cache'}
+            </span>
           </button>
 
           {/* Sync Pending Invoices Button */}

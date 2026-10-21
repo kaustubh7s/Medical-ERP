@@ -111,21 +111,21 @@ export const DashboardView: React.FC = () => {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold"
           >
             <ShoppingCart className="h-3.5 w-3.5" />
-            <span>F2 Billing</span>
+            <span>Shift+F2 Billing</span>
           </button>
           <button
             onClick={() => setActiveTab('purchases')}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold"
           >
             <Plus className="h-3.5 w-3.5" />
-            <span>F3 Inward GRN</span>
+            <span>Shift+F3 Inward GRN</span>
           </button>
           {heldBills.length > 0 && (
             <button
               onClick={() => setActiveTab('pos')}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold animate-pulse"
             >
-              <span>F5 Parked ({heldBills.length})</span>
+              <span>Shift+F5 Parked ({heldBills.length})</span>
             </button>
           )}
           <button

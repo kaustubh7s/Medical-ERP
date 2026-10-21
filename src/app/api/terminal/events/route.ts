@@ -7,10 +7,16 @@ export async function GET() {
   const sseUrl = `${config.baseUrl.replace(/\/+$/, '')}/api/terminal/events`;
 
   try {
+    const headers: Record<string, string> = {
+      Accept: 'text/event-stream',
+      'ngrok-skip-browser-warning': 'true',
+    };
+    if (config.token) {
+      headers['Authorization'] = `Bearer ${config.token}`;
+    }
+
     const upstreamRes = await fetch(sseUrl, {
-      headers: {
-        Accept: 'text/event-stream',
-      },
+      headers,
       cache: 'no-store',
     });
 
