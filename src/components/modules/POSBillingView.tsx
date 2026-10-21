@@ -2063,348 +2063,125 @@ export const POSBillingView: React.FC = () => {
             </div>
           </div>
 
-          {/* Instant Dropdown Spreadsheet Results + Live Interactive Medicine Preview */}
+          {/* Clean, Simple Medicine Search Results Dropdown */}
           {isDropdownOpen && filteredMedicines.length > 0 && (
-            <div className="absolute left-0 right-0 top-11 z-50 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden flex flex-col lg:flex-row max-h-[520px] w-full min-w-0 lg:min-w-[700px] xl:min-w-[900px] animate-in fade-in zoom-in-95 duration-100">
-              
-              {/* Left Column: Search Results Spreadsheet (approx 56%) */}
-              <div className="lg:w-7/12 flex flex-col border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800">
-                <div className="bg-slate-900 text-white px-3 py-2 border-b border-slate-800 flex items-center justify-between">
-                  <span className="text-[11px] font-black tracking-wide text-slate-100">
-                    MATCHING MEDICINES ({filteredMedicines.length})
-                  </span>
-                </div>
-
-                <div className="overflow-y-auto max-h-[440px] flex-1">
-                  {/* Desktop Table (lg: and up) */}
-                  <table className="hidden lg:table erp-table">
-                    <thead>
-                      <tr>
-                        <th className="w-6 text-center">#</th>
-                        <th>Brand Medicine</th>
-                        <th>Generic Salt</th>
-                        <th>Pack</th>
-                        <th className="text-center">Stock Breakdown</th>
-                        <th className="text-right">Strip MRP</th>
-                        <th className="text-right">Per Tab Rate</th>
-                        <th className="text-center">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredMedicines.map((med, idx) => {
-                        const isHighlighted = idx === highlightedIndex;
-                        const packCount = parseUnitsPerPack(med.packSize, med.dosageForm, med.unitsPerPack);
-                        const stripPrice = med.batches[0]?.saleRate || med.batches[0]?.mrp || 0;
-                        const perTabPrice = getPerUnitRate(stripPrice, packCount);
-                        const stockInfo = formatStockDisplay(med.totalStock, packCount, med.dosageForm);
-
-                        return (
-                          <tr
-                            key={med.id}
-                            ref={isHighlighted ? activeRowRef : undefined}
-                            onMouseEnter={() => setHighlightedIndex(idx)}
-                            onClick={() => handleSelectMedicine(med)}
-                            className={`cursor-pointer transition-colors ${
-                              isHighlighted
-                                ? 'bg-emerald-100/95 dark:bg-emerald-950/70 border-l-4 border-l-emerald-600 font-bold'
-                                : 'hover:bg-slate-100/80 dark:hover:bg-slate-800/60'
-                            }`}
-                          >
-                            <td className="text-center text-[10px] font-mono text-slate-400">
-                              {isHighlighted ? (
-                                <span className="inline-block px-1 rounded bg-emerald-600 text-white font-black text-[9px]">
-                                  ►
-                                </span>
-                              ) : (
-                                idx + 1
-                              )}
-                            </td>
-                            <td>
-                              <div className="flex items-center gap-1.5">
-                                <span className={`font-black text-xs ${isHighlighted ? 'text-emerald-950 dark:text-emerald-200' : 'text-slate-900 dark:text-slate-100'}`}>
-                                  {med.name}
-                                </span>
-                                {med.requiresPrescription && (
-                                  <span className="px-1 py-0.2 rounded bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-400 font-black text-[9px]">
-                                    Rx
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="text-slate-600 dark:text-slate-400 text-[11px] font-medium truncate max-w-[130px]">
-                              {med.genericName}
-                            </td>
-                            <td className="text-slate-500 dark:text-slate-400 text-[10px] font-medium">{med.packSize}</td>
-                            <td className="text-center font-mono font-bold text-[10.5px]">
-                              <span
-                                className={`px-1.5 py-0.5 rounded ${
-                                  med.totalStock <= med.reorderLevel
-                                    ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-black'
-                                    : 'bg-emerald-100/80 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300'
-                                }`}
-                              >
-                                {stockInfo.displayText}
-                              </span>
-                            </td>
-                            <td className="text-right font-mono font-black text-slate-900 dark:text-slate-100">
-                              ₹{stripPrice.toFixed(2)}
-                            </td>
-                            <td className="text-right font-mono font-bold text-emerald-700 dark:text-emerald-400 text-[11px]">
-                              {packCount > 1 ? `₹${perTabPrice.toFixed(2)}/tab` : '—'}
-                            </td>
-                            <td className="text-center">
-                              <span
-                                className={`px-2 py-0.5 rounded font-bold text-[10px] transition-transform active:scale-95 ${
-                                  isHighlighted
-                                    ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs'
-                                    : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
-                                }`}
-                              >
-                                + Pick
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-
-                  {/* Mobile Search Results List (No Horizontal Scroll!) */}
-                  <div className="lg:hidden divide-y divide-slate-100 dark:divide-slate-800">
-                    {filteredMedicines.map((med, idx) => {
-                      const isHighlighted = idx === highlightedIndex;
-                      const packCount = parseUnitsPerPack(med.packSize, med.dosageForm, med.unitsPerPack);
-                      const stripPrice = med.batches[0]?.saleRate || med.batches[0]?.mrp || 0;
-                      const stockInfo = formatStockDisplay(med.totalStock, packCount, med.dosageForm);
-
-                      return (
-                        <div
-                          key={med.id}
-                          onClick={() => handleSelectMedicine(med)}
-                          className={`p-2.5 flex items-center justify-between gap-2 cursor-pointer transition-colors ${
-                            isHighlighted ? 'bg-emerald-50 dark:bg-emerald-950/50' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                          }`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-bold text-xs text-slate-900 dark:text-slate-100">{med.name}</span>
-                              {med.requiresPrescription && (
-                                <span className="px-1 py-0.2 rounded bg-rose-100 text-rose-700 font-bold text-[8.5px]">
-                                  Rx
-                                </span>
-                              )}
-                              <span className="text-[10px] font-mono text-slate-400">({med.packSize})</span>
-                            </div>
-                            <p className="text-[10px] text-slate-500 truncate mt-0.5">{med.genericName}</p>
-                            <div className="flex items-center gap-2 mt-1 text-[10px]">
-                              <span className={`px-1.5 py-0.2 rounded font-mono font-bold ${
-                                med.totalStock <= med.reorderLevel ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-800'
-                              }`}>
-                                {stockInfo.displayText}
-                              </span>
-                              <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                                ₹{stripPrice.toFixed(2)}
-                              </span>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            className="px-2.5 py-1.5 rounded-lg bg-emerald-700 text-white font-bold text-[11px] shrink-0 active:scale-95 shadow-xs"
-                          >
-                            + Add
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+            <div
+              ref={searchContainerRef}
+              className="absolute left-0 right-0 top-11 z-50 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden max-h-[420px] flex flex-col w-full max-w-full lg:max-w-3xl animate-in fade-in zoom-in-95 duration-100"
+            >
+              {/* Header: Clean Results Count */}
+              <div className="bg-slate-50 dark:bg-slate-800/80 px-3.5 py-2 border-b border-slate-200 dark:border-slate-700/80 flex items-center justify-between text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                <span>
+                  {searchTerm.trim() ? `Matching Medicines (${filteredMedicines.length})` : `Top Medicines (${filteredMedicines.length})`}
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal hidden sm:inline">
+                  Use ↑ ↓ arrows &amp; Enter to pick
+                </span>
               </div>
 
-              {/* Right Column: Live Pharma & FEFO Batch Preview Card (approx 44%) */}
-              {currentPreviewMed && (
-                <div className="lg:w-5/12 bg-slate-50 dark:bg-slate-950/90 p-3.5 flex flex-col justify-between overflow-y-auto max-h-[480px] space-y-3">
-                  {/* Top Live Badge + Brand & Dosage Header */}
-                  <div>
-                    <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 mb-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                        </span>
-                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                          Live Medicine Preview
-                        </span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                        {currentPreviewMed.dosageForm}
-                      </span>
-                    </div>
+              {/* Clean Single-Column Medicine List */}
+              <div className="overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 max-h-[340px]">
+                {filteredMedicines.map((med, idx) => {
+                  const isHighlighted = idx === highlightedIndex;
+                  const packCount = parseUnitsPerPack(med.packSize, med.dosageForm, med.unitsPerPack);
+                  const stripPrice = med.batches[0]?.saleRate || med.batches[0]?.mrp || 0;
+                  const perTabPrice = getPerUnitRate(stripPrice, packCount);
+                  const inStock = med.totalStock > 0;
 
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h4 className="text-sm font-black text-slate-950 dark:text-white leading-tight">
-                          {currentPreviewMed.name}
-                        </h4>
-                        <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">
-                          {currentPreviewMed.genericName}
+                  return (
+                    <div
+                      key={med.id}
+                      ref={isHighlighted ? activeRowRef : undefined}
+                      onMouseEnter={() => setHighlightedIndex(idx)}
+                      onClick={() => handleSelectMedicine(med)}
+                      className={`px-3.5 py-2.5 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
+                        isHighlighted
+                          ? 'bg-emerald-50 dark:bg-emerald-950/60 border-l-4 border-l-emerald-600'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/40 border-l-4 border-l-transparent'
+                      }`}
+                    >
+                      {/* Left: Brand Name, Rx pill, Generic Salt & Pack */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className={`text-xs font-bold ${
+                              isHighlighted ? 'text-emerald-900 dark:text-emerald-200' : 'text-slate-900 dark:text-slate-100'
+                            }`}
+                          >
+                            {med.name}
+                          </span>
+                          {med.requiresPrescription && (
+                            <span className="px-1 py-0.2 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 font-bold text-[9px]">
+                              Rx
+                            </span>
+                          )}
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            • {med.packSize}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                          {med.genericName}
                         </p>
                       </div>
-                      <span
-                        className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border shrink-0 ${
-                          currentPreviewMed.scheduleType === 'OTC'
-                            ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
-                            : currentPreviewMed.scheduleType === 'SCHEDULE_H1'
-                            ? 'bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30'
-                            : currentPreviewMed.scheduleType === 'NARCOTIC'
-                            ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/40'
-                            : 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30'
-                        }`}
-                      >
-                        {currentPreviewMed.scheduleType.replace('_', ' ')}
-                      </span>
-                    </div>
 
-                    {/* Loose Tablet vs Full Strip Rate Highlight Box */}
-                    {(() => {
-                      const packCount = parseUnitsPerPack(currentPreviewMed.packSize, currentPreviewMed.dosageForm, currentPreviewMed.unitsPerPack);
-                      const stripRate = currentPreviewMed.batches[0]?.saleRate || currentPreviewMed.batches[0]?.mrp || 0;
-                      const tabRate = getPerUnitRate(stripRate, packCount);
-                      const stockInfo = formatStockDisplay(currentPreviewMed.totalStock, packCount, currentPreviewMed.dosageForm);
+                      {/* Right: Stock, Price & Pick Button */}
+                      <div className="flex items-center gap-3 shrink-0">
+                        {/* Stock Status Badge */}
+                        <span
+                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
+                            inStock
+                              ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300'
+                              : 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300'
+                          }`}
+                        >
+                          {inStock ? `${med.totalStock} in stock` : 'Out of Stock'}
+                        </span>
 
-                      return (
-                        <div className="mt-2.5 p-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs space-y-1.5">
-                          <div className="flex items-center justify-between text-[11px]">
-                            <span className="font-bold text-slate-700 dark:text-slate-300">
-                              Full Strip Rate ({packCount} Units):
-                            </span>
-                            <span className="font-mono font-black text-slate-900 dark:text-slate-100 text-xs">
-                              ₹{stripRate.toFixed(2)}
-                            </span>
-                          </div>
+                        {/* Price */}
+                        <div className="text-right min-w-[70px]">
+                          <span className="text-xs font-mono font-black text-slate-900 dark:text-slate-100 block">
+                            ₹{stripPrice.toFixed(2)}
+                          </span>
                           {packCount > 1 && (
-                            <div className="flex items-center justify-between text-[11px] pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60">
-                              <span className="font-bold text-emerald-800 dark:text-emerald-300">
-                                💊 Loose Tablet / Cut-Strip Price:
-                              </span>
-                              <span className="font-mono font-black text-emerald-700 dark:text-emerald-400 text-xs bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded">
-                                ₹{tabRate.toFixed(2)} / Tablet
-                              </span>
-                            </div>
+                            <span className="text-[10px] font-mono text-slate-400 block">
+                              ₹{perTabPrice.toFixed(2)}/tab
+                            </span>
                           )}
-                          <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5">
-                            <span>Available Stock:</span>
-                            <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                              {stockInfo.displayText}
-                            </span>
-                          </div>
                         </div>
-                      );
-                    })()}
 
-                    {/* Metadata Strip */}
-                    <div className="grid grid-cols-2 gap-1.5 mt-2 text-[11px]">
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded p-1.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">Manufacturer</span>
-                        <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block">
-                          {currentPreviewMed.manufacturer}
-                        </span>
-                      </div>
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded p-1.5">
-                        <span className="text-[9px] font-bold uppercase text-slate-400 block">HSN & Tax</span>
-                        <span className="font-semibold text-slate-800 dark:text-slate-200">
-                          {currentPreviewMed.hsnCode} • {currentPreviewMed.gstRate}% GST
-                        </span>
+                        {/* Pick / Add Button */}
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          className={`px-2.5 py-1 rounded text-xs font-bold transition-all shadow-2xs ${
+                            isHighlighted
+                              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-emerald-600 hover:text-white'
+                          }`}
+                        >
+                          + Pick
+                        </button>
                       </div>
                     </div>
-                  </div>
+                  );
+                })}
+              </div>
 
-                  {/* Available Batches Breakdown (FEFO Order) */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[10px] font-black uppercase text-slate-500 dark:text-slate-400 tracking-wider">
-                        Available Batches (FEFO Sorted)
-                      </span>
-                    </div>
-
-                    <div className="space-y-1 max-h-32 overflow-y-auto">
-                      {currentPreviewMed.batches.map((b) => {
-                        const packCount = parseUnitsPerPack(currentPreviewMed.packSize, currentPreviewMed.dosageForm, currentPreviewMed.unitsPerPack);
-                        const stockInfo = formatStockDisplay(b.availableQuantity, packCount, currentPreviewMed.dosageForm);
-                        const rate = b.saleRate || b.mrp;
-                        const unitRate = getPerUnitRate(rate, packCount);
-
-                        return (
-                          <div
-                            key={b.id}
-                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded p-1.5 flex items-center justify-between text-xs"
-                          >
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
-                                  {b.batchNumber}
-                                </span>
-                                <span
-                                  className={`text-[9px] px-1 rounded font-bold ${
-                                    b.status === 'NEAR_EXPIRY'
-                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
-                                      : b.status === 'EXPIRED'
-                                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
-                                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                                  }`}
-                                >
-                                  Exp: {b.expiryDate}
-                                </span>
-                              </div>
-                              <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                                📍 {b.rackLocation || 'Shelf A-1'}
-                              </span>
-                            </div>
-                            <div className="text-right">
-                              <span className="font-mono font-black text-emerald-700 dark:text-emerald-400 block">
-                                ₹{rate.toFixed(2)} {packCount > 1 ? `(₹${unitRate.toFixed(2)}/tab)` : ''}
-                              </span>
-                              <span className="text-[10px] font-mono font-bold text-slate-600 dark:text-slate-400">
-                                Stock: {stockInfo.displayText}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Generic Salt Substitutes (Alternative Medicines in Stock) */}
-                  {saltSubstitutes.length > 0 && (
-                    <div>
-                      <span className="text-[10px] font-black uppercase text-purple-700 dark:text-purple-400 tracking-wider block mb-1">
-                        Salt Substitutes in Stock:
-                      </span>
-                      <div className="space-y-1">
-                        {saltSubstitutes.map((sub) => (
-                          <div
-                            key={sub.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectMedicine(sub);
-                            }}
-                            className="bg-purple-50/80 dark:bg-purple-950/30 hover:bg-purple-100/80 border border-purple-200 dark:border-purple-900/40 rounded p-1.5 flex items-center justify-between text-xs cursor-pointer transition-colors"
-                          >
-                            <div>
-                              <span className="font-bold text-slate-900 dark:text-slate-100">{sub.name}</span>
-                              <span className="text-[10px] text-purple-600 dark:text-purple-300 block">
-                                {sub.packSize} • ₹{sub.batches[0]?.mrp || 0}
-                              </span>
-                            </div>
-                            <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-purple-600 text-white">
-                              {sub.totalStock} in stock →
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* Clean Footer Bar with Keyboard Guide */}
+              <div className="bg-slate-50 dark:bg-slate-800/90 px-3.5 py-1.5 border-t border-slate-200 dark:border-slate-700/80 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                <span className="flex items-center gap-1.5">
+                  <kbd className="px-1 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono text-[9px]">↑</kbd>
+                  <kbd className="px-1 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono text-[9px]">↓</kbd>
+                  <span>Navigate</span>
+                  <span className="text-slate-300 dark:text-slate-600">•</span>
+                  <kbd className="px-1 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono text-[9px]">Enter</kbd>
+                  <span>Select</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <kbd className="px-1 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono text-[9px]">Esc</kbd>
+                  <span>Close</span>
+                </span>
+              </div>
             </div>
           )}
         </div>

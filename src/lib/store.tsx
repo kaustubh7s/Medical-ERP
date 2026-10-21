@@ -340,9 +340,17 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
           isApplyingCloudSnapshotRef.current = true;
           const parsed = json.data;
           if (Array.isArray(parsed.medicines)) {
+            const initialMap = new Map<string, Medicine>(INITIAL_MEDICINES.map((m) => [m.id, m]));
             const cloudMedIds = new Set(parsed.medicines.map((m: Medicine) => m.id));
             const missingInitial = INITIAL_MEDICINES.filter((m) => !cloudMedIds.has(m.id));
-            setMedicines([...parsed.medicines, ...missingInitial]);
+            const updatedMedicines = parsed.medicines.map((m: Medicine) => {
+              const init = initialMap.get(m.id);
+              if (init && (!m.batches || m.batches.length === 0 || m.totalStock === 0)) {
+                return { ...m, ...init };
+              }
+              return m;
+            });
+            setMedicines([...updatedMedicines, ...missingInitial]);
           }
 
           if (Array.isArray(parsed.customers)) {
@@ -474,9 +482,17 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.medicines) {
+          const initialMap = new Map<string, Medicine>(INITIAL_MEDICINES.map((m) => [m.id, m]));
           const existingMedIds = new Set(parsed.medicines.map((m: Medicine) => m.id));
           const missingInitial = INITIAL_MEDICINES.filter((m) => !existingMedIds.has(m.id));
-          setMedicines([...parsed.medicines, ...missingInitial]);
+          const updatedMedicines = parsed.medicines.map((m: Medicine) => {
+            const init = initialMap.get(m.id);
+            if (init && (!m.batches || m.batches.length === 0 || m.totalStock === 0)) {
+              return { ...m, ...init };
+            }
+            return m;
+          });
+          setMedicines([...updatedMedicines, ...missingInitial]);
         }
         if (parsed.customers) setCustomers(parsed.customers);
         if (parsed.suppliers) setSuppliers(parsed.suppliers);
