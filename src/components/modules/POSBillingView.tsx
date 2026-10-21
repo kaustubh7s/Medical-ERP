@@ -124,6 +124,7 @@ export const POSBillingView: React.FC = () => {
     cancelPendingMembership,
     setActiveTab,
     updateSettings,
+    resetMemberships,
     findMedicineByBarcodeOrQR,
     assignBarcodeToMedicine,
     barcodeMappings,
@@ -4624,6 +4625,20 @@ export const POSBillingView: React.FC = () => {
                 }`}
               >
                 <span>{showQuickAddForm ? '✕ Close Form' : '+ New Patient'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm('Reset all memberships to clean initial dataset (Rajesh, Sunita, Anand) and clean duplicate members?')) {
+                    resetMemberships();
+                  }
+                }}
+                title="Reset all memberships to initial demo members and deduplicate customer records"
+                className="px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 hover:bg-rose-100 shadow-xs"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span>Reset All Members</span>
               </button>
             </div>
           </div>

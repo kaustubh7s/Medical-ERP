@@ -40,7 +40,7 @@ export const AllMembersTab: React.FC<AllMembersTabProps> = ({
   onExtendMember,
   onOpenCreate,
 }) => {
-  const { memberships, membershipSettings, invoices, salesReturns, updateMembershipStatus } = usePharmacy();
+  const { memberships, membershipSettings, invoices, salesReturns, updateMembershipStatus, resetMemberships } = usePharmacy();
 
   // Search & Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -171,6 +171,18 @@ export const AllMembersTab: React.FC<AllMembersTabProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => {
+              if (confirm('Reset all memberships to clean initial dataset (Rajesh, Sunita, Anand) and clean duplicate members?')) {
+                resetMemberships();
+              }
+            }}
+            title="Reset all memberships to clean initial dataset"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-bold hover:bg-rose-100 transition-colors shadow-xs"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Reset All Members
+          </button>
           <button
             onClick={handleExportCSV}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-50 transition-colors shadow-xs"

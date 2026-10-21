@@ -56,6 +56,7 @@ export const MembershipView: React.FC = () => {
     updateMembershipSettings,
     toggleMedicineMembershipDiscount,
     setMedicineMembershipDiscountBulk,
+    resetMemberships,
     addCustomer,
   } = usePharmacy();
 
@@ -401,6 +402,20 @@ export const MembershipView: React.FC = () => {
                 <span className="text-[10px] opacity-75 font-mono">({f.count})</span>
               </button>
             ))}
+
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm('Reset all memberships to clean initial dataset (Rajesh, Sunita, Anand) and clean duplicate members?')) {
+                  resetMemberships();
+                }
+              }}
+              title="Reset all memberships to clean initial dataset"
+              className="px-2.5 py-1 rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-bold flex items-center gap-1 hover:bg-rose-100 transition-colors shadow-xs ml-auto"
+            >
+              <RotateCcw className="h-3 w-3" />
+              <span>Reset All Members</span>
+            </button>
           </div>
         </div>
 

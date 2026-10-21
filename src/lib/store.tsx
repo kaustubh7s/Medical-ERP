@@ -169,6 +169,7 @@ interface PharmacyStoreContextType {
   getMemberById: (id: string) => Membership | undefined;
   toggleMedicineMembershipDiscount: (medicineId: string) => void;
   setMedicineMembershipDiscountBulk: (medicineIds: string[], isEligible: boolean) => void;
+  resetMemberships: () => void;
 
   // Paid Customer Membership Billing Integration
   pendingMemberships: PendingMembershipRegistration[];
@@ -494,7 +495,19 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
           });
           setMedicines([...updatedMedicines, ...missingInitial]);
         }
-        if (parsed.customers) setCustomers(parsed.customers);
+        if (parsed.customers) {
+          const seenPhones = new Set<string>();
+          const dedupedCustomers: Customer[] = [];
+          for (const c of parsed.customers as Customer[]) {
+            const clean = (c.phone || '').replace(/\D/g, '');
+            const key = clean.length >= 10 ? clean.slice(-10) : (clean || c.id);
+            if (!seenPhones.has(key)) {
+              seenPhones.add(key);
+              dedupedCustomers.push(c);
+            }
+          }
+          setCustomers(dedupedCustomers);
+        }
         if (parsed.suppliers) setSuppliers(parsed.suppliers);
         if (parsed.invoices) setInvoices(parsed.invoices);
         if (parsed.heldBills) setHeldBills(parsed.heldBills);
@@ -512,7 +525,19 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         if (parsed.damagedStock) setDamagedStock(parsed.damagedStock);
         if (parsed.users) setUsers(parsed.users);
         if (parsed.settings) setSettings(parsed.settings);
-        if (parsed.memberships) setMemberships(parsed.memberships);
+        if (parsed.memberships) {
+          const seenMemPhones = new Set<string>();
+          const dedupedMembers: Membership[] = [];
+          for (const m of parsed.memberships as Membership[]) {
+            const clean = (m.customerPhone || '').replace(/\D/g, '');
+            const key = clean.length >= 10 ? clean.slice(-10) : (clean || m.id);
+            if (!seenMemPhones.has(key)) {
+              seenMemPhones.add(key);
+              dedupedMembers.push(m);
+            }
+          }
+          setMemberships(dedupedMembers);
+        }
         if (parsed.membershipSettings) setMembershipSettings(parsed.membershipSettings);
         if (parsed.pendingMemberships) setPendingMemberships(parsed.pendingMemberships);
         if (parsed.auditLogs) setAuditLogs(parsed.auditLogs);
@@ -1567,6 +1592,24 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
 
   // Customer & Supplier CRUD
   const addCustomer = (cust: Omit<Customer, 'id' | 'createdDate' | 'loyaltyPoints' | 'currentDue'>) => {
+    const cleanPhone = (cust.phone || '').replace(/\D/g, '');
+    if (cleanPhone) {
+      const existing = customers.find((c) => {
+        const cPhone = (c.phone || '').replace(/\D/g, '');
+        if (cleanPhone.length >= 10 && cPhone.length >= 10) {
+          return cleanPhone.slice(-10) === cPhone.slice(-10);
+        }
+        return cleanPhone === cPhone;
+      });
+      if (existing) {
+        updateCustomer(existing.id, {
+          name: cust.name && cust.name !== 'Walk-in Cash Customer' ? cust.name : existing.name,
+          doctorName: cust.doctorName || existing.doctorName,
+          address: cust.address || existing.address,
+        });
+        return existing;
+      }
+    }
     const newCust: Customer = {
       ...cust,
       id: `cust-${Date.now()}`,
@@ -2042,6 +2085,20 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
 
   // Membership Management Methods
   const createMembership = (data: Omit<Membership, 'id' | 'membershipId' | 'createdDate' | 'history'>): Membership => {
+    const cleanPhone = (data.customerPhone || '').replace(/\D/g, '');
+    if (cleanPhone) {
+      const existing = memberships.find((m) => {
+        const mClean = (m.customerPhone || '').replace(/\D/g, '');
+        if (cleanPhone.length >= 10 && mClean.length >= 10) {
+          return cleanPhone.slice(-10) === mClean.slice(-10);
+        }
+        return cleanPhone === mClean;
+      });
+      if (existing) {
+        const updated = renewMembership(existing.id, data.durationMonths, data.notes, data.feePaid, data.paymentMode);
+        if (updated) return updated;
+      }
+    }
     const nextNum = membershipSettings.nextNumber;
     const year = new Date().getFullYear();
     const formattedId = `${membershipSettings.idPrefix}-${year}-${String(nextNum).padStart(4, '0')}`;
@@ -2305,14 +2362,45 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
     const clean = phone.replace(/\D/g, '');
     if (!clean) return undefined;
     return memberships.find((m) => {
-      const mClean = m.customerPhone.replace(/\D/g, '');
-      return mClean === clean || mClean.endsWith(clean) || clean.endsWith(mClean);
+      const mClean = (m.customerPhone || '').replace(/\D/g, '');
+      if (!mClean) return false;
+      if (clean.length >= 10 && mClean.length >= 10) {
+        return clean.slice(-10) === mClean.slice(-10);
+      }
+      return mClean === clean;
     });
   };
 
   const getMemberById = (id: string): Membership | undefined => {
     if (!id) return undefined;
     return memberships.find((m) => m.id === id || m.membershipId === id);
+  };
+
+  const resetMemberships = () => {
+    setMemberships(INITIAL_MEMBERSHIPS);
+    setPendingMemberships([]);
+    setPendingMembershipCartItem(null);
+    setMembershipSettings(INITIAL_MEMBERSHIP_SETTINGS);
+
+    // Clean duplicate customers from CRM list
+    setCustomers((prev) => {
+      const seen = new Set<string>();
+      const deduped: Customer[] = [];
+      for (const c of prev) {
+        const clean = (c.phone || '').replace(/\D/g, '');
+        const key = clean.length >= 10 ? clean.slice(-10) : (clean || c.id);
+        if (!seen.has(key)) {
+          seen.add(key);
+          deduped.push(c);
+        }
+      }
+      return deduped;
+    });
+
+    logAudit('UPDATE', 'Membership Module', 'Reset all memberships to clean initial dataset and deduplicated customers');
+    setTimeout(() => {
+      pushToCloud();
+    }, 100);
   };
 
   const createPendingMembership = (
@@ -2843,6 +2931,7 @@ export function PharmacyProvider({ children }: { children: ReactNode }) {
         updateMembershipStatus,
         updateMembership,
         updateMembershipSettings,
+        resetMemberships,
         getMemberByPhone,
         getMemberById,
         toggleMedicineMembershipDiscount,
